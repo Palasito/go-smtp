@@ -1,0 +1,44 @@
+# ---- Go ----
+# Compiled binaries
+smtp-relay
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+
+# Go build cache
+/vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# ---- Certs / Secrets ----
+certs/*.pem
+certs/*.crt
+certs/*.key
+certs/*.pfx
+certs/*.p12
+*.env
+.env*
+!.env.example
+
+# ---- Docker ----
+docker-compose.override.yml
+
+# ---- IDE / OS ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ---- Build artefacts ----
+dist/
+bin/
