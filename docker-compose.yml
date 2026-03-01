@@ -9,14 +9,14 @@ services:
         - linux/arm/v7
         - linux/arm64
     ports:
-      - "8125:8025"
+      - "8025:8025"
     volumes:
       - ./certs:/usr/src/smtp-relay/certs
     environment:
       - LOG_LEVEL=DEBUG
       - TLS_SOURCE=off
       - REQUIRE_TLS=false
-      - SERVER_GREETING=Microsoft Graph SMTP GO OAuth Relay
+      - SERVER_GREETING=SMTP GO Graph Relay
       - USERNAME_DELIMITER=@
-      
+
     restart: unless-stopped

@@ -11,7 +11,7 @@ It accepts SMTP connections, authenticates clients via **OAuth 2.0 client creden
 ## How it works
 
 ```
-SMTP Client → smtp-oauth-relay:8125 → Microsoft Graph API → recipient mailbox
+SMTP Client → smtp-oauth-relay:8025 → Microsoft Graph API → recipient mailbox
 ```
 
 1. Client connects and authenticates with `AUTH PLAIN` or `AUTH LOGIN`
@@ -81,7 +81,7 @@ export AZURE_TABLES_URL=https://<account>.table.core.windows.net/<table>
 
 ```bash
 docker run -d \
-  -p 8125:8025 \
+  -p 8025:8025 \
   -e TLS_SOURCE=file \
   -e TLS_CERT_FILEPATH=/certs/cert.pem \
   -e TLS_KEY_FILEPATH=/certs/key.pem \
@@ -127,7 +127,7 @@ A basic connectivity test script is provided:
 
 ```bash
 chmod +x scripts/test-smtp.sh
-./scripts/test-smtp.sh localhost 8125
+./scripts/test-smtp.sh localhost 8025
 ```
 
 This sends `EHLO test` and `QUIT` and prints the server response. You should see the `220` greeting and `250` EHLO capabilities listing.
@@ -146,7 +146,7 @@ This sends `EHLO test` and `QUIT` and prints the server response. You should see
 | Dependencies | pip packages, venv | Compiled in, zero runtime deps |
 | Concurrency | asyncio (single thread) | Go goroutines (multi-core) |
 
-All **environment variables**, the **username format**, and the **Azure integration** are identical. The only thing changed is the **SMTP port (8125)**, changing back to 8025 would make the Go version a drop-in replacement.
+All **environment variables**, the **SMTP port (8025)**, the **username format**, and the **Azure integration** are identical. The Go version is a drop-in replacement.
 
 ---
 
