@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strings"
 )
 
 const sendMailEndpoint = "https://graph.microsoft.com/v1.0/users/%s/sendMail"
@@ -25,12 +24,24 @@ const sendMailEndpoint = "https://graph.microsoft.com/v1.0/users/%s/sendMail"
 func SendMail(accessToken string, mimeBody []byte, fromEmail string) error {
 	url := fmt.Sprintf(sendMailEndpoint, fromEmail)
 
-	encoded := base64.StdEncoding.EncodeToString(mimeBody)
+	// Stream base64 encoding directly into the request body via a pipe,
+	// avoiding an in-memory copy of the full encoded string.
+	pr, pw := io.Pipe()
+	go func() {
+		enc := base64.NewEncoder(base64.StdEncoding, pw)
+		enc.Write(mimeBody)
+		enc.Close()
+		pw.Close()
+	}()
 
-	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(encoded))
+	req, err := http.NewRequest(http.MethodPost, url, pr)
 	if err != nil {
+		pr.CloseWithError(err)
 		return fmt.Errorf("failed to build Graph API request: %w", err)
 	}
+	// Provide Content-Length so the HTTP client can send the header correctly
+	// without buffering: base64 output is always (n+2)/3*4 bytes.
+	req.ContentLength = int64((len(mimeBody) + 2) / 3 * 4)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "text/plain")
 
