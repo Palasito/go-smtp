@@ -9,7 +9,7 @@ It accepts SMTP connections, authenticates clients via **OAuth 2.0 client creden
 ## How it works
 
 ```
-SMTP Client → smtp-oauth-relay:8025 → Microsoft Graph API → recipient mailbox
+SMTP Client → smtp-oauth-relay:8125 → Microsoft Graph API → recipient mailbox
 ```
 
 1. Client connects and authenticates with `AUTH PLAIN` or `AUTH LOGIN`
@@ -35,7 +35,7 @@ See [docs/authentication.md](../docs/authentication.md) for the full username fo
 ### From source
 
 ```bash
-cd GoSMTPServer
+cd go-smtp
 go build -o smtp-relay ./cmd/smtp-relay
 ```
 
@@ -50,10 +50,10 @@ CGO_ENABLED=0 go build -ldflags="-s -w" -trimpath -o smtp-relay ./cmd/smtp-relay
 Build from the **workspace root**:
 
 ```bash
-docker build -t smtp-oauth-relay:go -f GoSMTPServer/Dockerfile GoSMTPServer/
+docker build -t smtp-oauth-relay:go -f go-smtp/Dockerfile go-smtp/
 ```
 
-Or from inside `GoSMTPServer/`:
+Or from inside `go-smtp/`:
 
 ```bash
 docker build -t smtp-oauth-relay:go .
@@ -79,7 +79,7 @@ export AZURE_TABLES_URL=https://<account>.table.core.windows.net/<table>
 
 ```bash
 docker run -d \
-  -p 8025:8025 \
+  -p 8125:8025 \
   -e TLS_SOURCE=file \
   -e TLS_CERT_FILEPATH=/certs/cert.pem \
   -e TLS_KEY_FILEPATH=/certs/key.pem \
@@ -89,7 +89,7 @@ docker run -d \
 
 ### Docker Compose
 
-Use the existing [`docker-compose.yml`](../docker-compose.yml) in the repo root. Change the `image:` or `build:` context to point at `GoSMTPServer/`.
+Use the existing [`docker-compose.yml`](../docker-compose.yml) in the repo root. Change the `image:` or `build:` context to point at `go-smtp/`.
 
 ---
 
@@ -125,7 +125,7 @@ A basic connectivity test script is provided:
 
 ```bash
 chmod +x scripts/test-smtp.sh
-./scripts/test-smtp.sh localhost 8025
+./scripts/test-smtp.sh localhost 8125
 ```
 
 This sends `EHLO test` and `QUIT` and prints the server response. You should see the `220` greeting and `250` EHLO capabilities listing.
@@ -144,7 +144,7 @@ This sends `EHLO test` and `QUIT` and prints the server response. You should see
 | Dependencies | pip packages, venv | Compiled in, zero runtime deps |
 | Concurrency | asyncio (single thread) | Go goroutines (multi-core) |
 
-All **environment variables**, the **SMTP port (8025)**, the **username format**, and the **Azure integration** are identical. The Go version is a drop-in replacement.
+All **environment variables**, the **SMTP port (8125)**, the **username format**, and the **Azure integration** are identical. The Go version is a drop-in replacement.
 
 ---
 
@@ -163,7 +163,7 @@ The only user-visible difference is a slightly different SMTP banner format in t
 ## Project structure
 
 ```
-GoSMTPServer/
+go-smtp/
 ├── cmd/smtp-relay/main.go       # Entrypoint: wires all components, starts server
 ├── internal/
 │   ├── config/config.go         # Environment variable loading and validation
