@@ -1,5 +1,7 @@
 # (Go) SMTP OAuth Relay 
 
+[![Build and Push Multi-Arch Docker Image](https://github.com/Palasito/go-smtp/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Palasito/go-smtp/actions/workflows/docker-publish.yml)
+
 A high-performance, statically-linked Go port of the [Python SMTP-to-Microsoft-Graph relay](../README.md).
 
 It accepts SMTP connections, authenticates clients via **OAuth 2.0 client credentials**, and delivers messages through the **Microsoft Graph API** (`sendMail`). It is a **drop-in replacement** for the Python version — all environment variables, the SMTP port, and the observable behaviour are identical.
