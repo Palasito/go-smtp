@@ -1,0 +1,22 @@
+services:
+  relay-node:
+    image: ghcr.io/palasito/go-smtp:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+        - linux/arm/v7
+        - linux/arm64
+    ports:
+      - "8125:8025"
+    volumes:
+      - ./certs:/usr/src/smtp-relay/certs
+    environment:
+      - LOG_LEVEL=DEBUG
+      - TLS_SOURCE=off
+      - REQUIRE_TLS=false
+      - SERVER_GREETING=Microsoft Graph SMTP GO OAuth Relay
+      - USERNAME_DELIMITER=@
+      
+    restart: unless-stopped
