@@ -1,4 +1,4 @@
-# smtp-oauth-relay (Go)
+# (Go) SMTP OAuth Relay 
 
 A high-performance, statically-linked Go port of the [Python SMTP-to-Microsoft-Graph relay](../README.md).
 
@@ -144,7 +144,7 @@ This sends `EHLO test` and `QUIT` and prints the server response. You should see
 | Dependencies | pip packages, venv | Compiled in, zero runtime deps |
 | Concurrency | asyncio (single thread) | Go goroutines (multi-core) |
 
-All **environment variables**, the **SMTP port (8125)**, the **username format**, and the **Azure integration** are identical. The Go version is a drop-in replacement.
+All **environment variables**, the **username format**, and the **Azure integration** are identical. The only thing changed is the **SMTP port (8125)**, changing back to 8025 would make the Go version a drop-in replacement.
 
 ---
 

@@ -108,7 +108,7 @@ func Load() (*Config, error) {
 	cfg.TLSCipherSuite = os.Getenv("TLS_CIPHER_SUITE") // optional, empty = system defaults
 
 	// --- SERVER_GREETING ---
-	cfg.ServerGreeting = getEnvOrDefault("SERVER_GREETING", "Microsoft Graph SMTP OAuth Relay")
+	cfg.ServerGreeting = getEnvOrDefault("SERVER_GREETING", "Microsoft Graph SMTP GO OAuth Relay")
 
 	// --- USERNAME_DELIMITER ---
 	delimiter := getEnvOrDefault("USERNAME_DELIMITER", "@")
