@@ -180,13 +180,25 @@ func (s *Session) Data(r io.Reader) error {
 		}
 	}
 
-	raw, err := io.ReadAll(r)
+	// Enforce the server-side message size limit.  We read one extra byte so
+	// that an exact-limit message is still accepted while an over-limit one is
+	// unambiguously detected.
+	maxSize := s.backend.Config.MaxMessageSize
+	raw, err := io.ReadAll(io.LimitReader(r, maxSize+1))
 	if err != nil {
 		slog.Error("Failed to read DATA body", "error", err)
 		return &smtp.SMTPError{
 			Code:         554,
 			EnhancedCode: smtp.EnhancedCode{5, 0, 0},
 			Message:      "Transaction failed",
+		}
+	}
+	if int64(len(raw)) > maxSize {
+		slog.Warn("Message rejected: exceeds size limit", "size", len(raw), "limit", maxSize)
+		return &smtp.SMTPError{
+			Code:         552,
+			EnhancedCode: smtp.EnhancedCode{5, 3, 4},
+			Message:      "Message size exceeds fixed maximum message size",
 		}
 	}
 

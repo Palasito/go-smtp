@@ -99,6 +99,7 @@ func main() {
 	s := gosmtp.NewServer(backend)
 	s.Addr = ":8025"
 	s.Domain = cfg.ServerGreeting
+	s.MaxMessageBytes = cfg.MaxMessageSize
 	s.TLSConfig = tlsCfg
 	s.AllowInsecureAuth = !cfg.RequireTLS
 
