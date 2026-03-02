@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -36,6 +37,15 @@ type Config struct {
 	WhitelistClientID     string // WHITELIST_CLIENT_ID — optional
 	WhitelistClientSecret string // WHITELIST_CLIENT_SECRET — optional
 	WhitelistFromEmail    string // WHITELIST_FROM_EMAIL — optional
+
+	// Server tuning
+	SMTPPort          string // SMTP_PORT — default "8025", valid port 1–65535
+	MaxMessageSize    int64  // MAX_MESSAGE_SIZE — default 36700160 (35 MB), must be >0
+	HTTPTimeout       int    // HTTP_TIMEOUT — default 30 (seconds), must be >0
+	RetryAttempts     int    // RETRY_ATTEMPTS — default 3, valid 1–10
+	RetryBaseDelay    int    // RETRY_BASE_DELAY — default 1 (seconds), must be >0
+	ShutdownTimeout   int    // SHUTDOWN_TIMEOUT — default 30 (seconds), must be >0
+	TLSReloadInterval int    // TLS_RELOAD_INTERVAL — default 300 (seconds), 0 = disabled
 }
 
 var (
@@ -134,6 +144,83 @@ func Load() (*Config, error) {
 	cfg.WhitelistClientID = os.Getenv("WHITELIST_CLIENT_ID")
 	cfg.WhitelistClientSecret = os.Getenv("WHITELIST_CLIENT_SECRET")
 	cfg.WhitelistFromEmail = os.Getenv("WHITELIST_FROM_EMAIL")
+
+	// --- SMTP_PORT ---
+	smtpPort := getEnvOrDefault("SMTP_PORT", "8025")
+	smtpPortNum, err := strconv.Atoi(smtpPort)
+	if err != nil || smtpPortNum < 1 || smtpPortNum > 65535 {
+		return nil, fmt.Errorf(
+			"invalid SMTP_PORT %q: must be an integer between 1 and 65535",
+			smtpPort,
+		)
+	}
+	cfg.SMTPPort = smtpPort
+
+	// --- MAX_MESSAGE_SIZE ---
+	maxMsgStr := getEnvOrDefault("MAX_MESSAGE_SIZE", "36700160")
+	maxMsg, err := strconv.ParseInt(maxMsgStr, 10, 64)
+	if err != nil || maxMsg <= 0 {
+		return nil, fmt.Errorf(
+			"invalid MAX_MESSAGE_SIZE %q: must be a positive integer (bytes)",
+			maxMsgStr,
+		)
+	}
+	cfg.MaxMessageSize = maxMsg
+
+	// --- HTTP_TIMEOUT ---
+	httpTimeoutStr := getEnvOrDefault("HTTP_TIMEOUT", "30")
+	httpTimeout, err := strconv.Atoi(httpTimeoutStr)
+	if err != nil || httpTimeout <= 0 {
+		return nil, fmt.Errorf(
+			"invalid HTTP_TIMEOUT %q: must be a positive integer (seconds)",
+			httpTimeoutStr,
+		)
+	}
+	cfg.HTTPTimeout = httpTimeout
+
+	// --- RETRY_ATTEMPTS ---
+	retryAttemptsStr := getEnvOrDefault("RETRY_ATTEMPTS", "3")
+	retryAttempts, err := strconv.Atoi(retryAttemptsStr)
+	if err != nil || retryAttempts < 1 || retryAttempts > 10 {
+		return nil, fmt.Errorf(
+			"invalid RETRY_ATTEMPTS %q: must be an integer between 1 and 10",
+			retryAttemptsStr,
+		)
+	}
+	cfg.RetryAttempts = retryAttempts
+
+	// --- RETRY_BASE_DELAY ---
+	retryDelayStr := getEnvOrDefault("RETRY_BASE_DELAY", "1")
+	retryDelay, err := strconv.Atoi(retryDelayStr)
+	if err != nil || retryDelay <= 0 {
+		return nil, fmt.Errorf(
+			"invalid RETRY_BASE_DELAY %q: must be a positive integer (seconds)",
+			retryDelayStr,
+		)
+	}
+	cfg.RetryBaseDelay = retryDelay
+
+	// --- SHUTDOWN_TIMEOUT ---
+	shutdownStr := getEnvOrDefault("SHUTDOWN_TIMEOUT", "30")
+	shutdownTimeout, err := strconv.Atoi(shutdownStr)
+	if err != nil || shutdownTimeout <= 0 {
+		return nil, fmt.Errorf(
+			"invalid SHUTDOWN_TIMEOUT %q: must be a positive integer (seconds)",
+			shutdownStr,
+		)
+	}
+	cfg.ShutdownTimeout = shutdownTimeout
+
+	// --- TLS_RELOAD_INTERVAL ---
+	tlsReloadStr := getEnvOrDefault("TLS_RELOAD_INTERVAL", "300")
+	tlsReload, err := strconv.Atoi(tlsReloadStr)
+	if err != nil || tlsReload < 0 {
+		return nil, fmt.Errorf(
+			"invalid TLS_RELOAD_INTERVAL %q: must be a non-negative integer (seconds, 0 = disabled)",
+			tlsReloadStr,
+		)
+	}
+	cfg.TLSReloadInterval = tlsReload
 
 	// If WHITELIST_IPS is set, the OAuth credentials must also be provided.
 	if cfg.WhitelistIPs != "" {

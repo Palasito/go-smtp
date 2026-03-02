@@ -1,14 +1,82 @@
 package graph
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/Palasito/go-smtp/internal/httpclient"
 )
 
 const sendMailEndpoint = "https://graph.microsoft.com/v1.0/users/%s/sendMail"
+
+// isRetryable returns true for status codes that represent transient failures.
+func isRetryable(code int) bool {
+	switch code {
+	case http.StatusTooManyRequests, // 429
+		http.StatusInternalServerError, // 500
+		http.StatusBadGateway,          // 502
+		http.StatusServiceUnavailable,  // 503
+		http.StatusGatewayTimeout:      // 504
+		return true
+	}
+	return false
+}
+
+// backoffDelay calculates the wait before the next attempt.
+// If the response carries a Retry-After header (integer seconds) its value
+// takes priority.  Otherwise exponential back-off is used: base * 2^attempt,
+// capped at 60 s.
+func backoffDelay(resp *http.Response, attempt int, base time.Duration) time.Duration {
+	const maxDelay = 60 * time.Second
+	if resp != nil {
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if secs, err := strconv.Atoi(ra); err == nil && secs > 0 {
+				d := time.Duration(secs) * time.Second
+				if d > maxDelay {
+					return maxDelay
+				}
+				return d
+			}
+		}
+	}
+	d := time.Duration(float64(base) * math.Pow(2, float64(attempt)))
+	if d > maxDelay {
+		return maxDelay
+	}
+	return d
+}
+
+// doAttempt builds a fresh pipe-backed request and executes one HTTP call.
+// The caller is responsible for closing resp.Body on a non-error return.
+func doAttempt(ctx context.Context, accessToken string, mimeBody []byte, url string) (*http.Response, error) {
+	pr, pw := io.Pipe()
+	go func() {
+		enc := base64.NewEncoder(base64.StdEncoding, pw)
+		enc.Write(mimeBody)
+		enc.Close()
+		pw.Close()
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, pr)
+	if err != nil {
+		pr.CloseWithError(err)
+		return nil, fmt.Errorf("failed to build Graph API request: %w", err)
+	}
+	// Provide Content-Length so the HTTP client can send the header correctly
+	// without buffering: base64 output is always ceil(n/3)*4 bytes.
+	req.ContentLength = int64((len(mimeBody) + 2) / 3 * 4)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "text/plain")
+
+	return httpclient.Client().Do(req)
+}
 
 // SendMail sends a raw MIME email via Microsoft Graph API.
 //
@@ -19,56 +87,62 @@ const sendMailEndpoint = "https://graph.microsoft.com/v1.0/users/%s/sendMail"
 //
 // Body:     base64-encoded raw MIME content (std encoding, as required by the Graph API)
 //
-// Returns nil on HTTP 202 Accepted; a descriptive error on any other status.
-// Port of Python's send_email().
-func SendMail(accessToken string, mimeBody []byte, fromEmail string) error {
+// Transient failures (429, 500, 502, 503, 504) and transport errors are
+// retried up to retryAttempts total attempts using exponential back-off
+// starting at retryBaseDelay.  A Retry-After response header overrides the
+// computed delay for 429 responses.
+func SendMail(accessToken string, mimeBody []byte, fromEmail string, retryAttempts int, retryBaseDelay time.Duration) error {
 	url := fmt.Sprintf(sendMailEndpoint, fromEmail)
+	ctx := context.Background()
 
-	// Stream base64 encoding directly into the request body via a pipe,
-	// avoiding an in-memory copy of the full encoded string.
-	pr, pw := io.Pipe()
-	go func() {
-		enc := base64.NewEncoder(base64.StdEncoding, pw)
-		enc.Write(mimeBody)
-		enc.Close()
-		pw.Close()
-	}()
+	var lastErr error
+	for attempt := 0; attempt < retryAttempts; attempt++ {
+		slog.Debug("Sending email via Microsoft Graph API", "from", fromEmail, "attempt", attempt+1)
 
-	req, err := http.NewRequest(http.MethodPost, url, pr)
-	if err != nil {
-		pr.CloseWithError(err)
-		return fmt.Errorf("failed to build Graph API request: %w", err)
+		resp, err := doAttempt(ctx, accessToken, mimeBody, url)
+		if err != nil {
+			// Transport-level error — always retryable.
+			lastErr = fmt.Errorf("Graph API request failed: %w", err)
+			slog.Warn("Graph API transport error", "attempt", attempt+1, "error", err)
+			if attempt+1 < retryAttempts {
+				delay := backoffDelay(nil, attempt, retryBaseDelay)
+				slog.Info("Backing off before retry", "delay", delay)
+				time.Sleep(delay)
+			}
+			continue
+		}
+
+		if resp.StatusCode == http.StatusAccepted { // 202 — success
+			resp.Body.Close()
+			slog.Info("Email sent successfully via Graph API", "from", fromEmail)
+			return nil
+		}
+
+		// Read and truncate the error body before deciding what to do.
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		excerpt := string(bodyBytes)
+		if len(excerpt) > 500 {
+			excerpt = excerpt[:500]
+		}
+		lastErr = fmt.Errorf("Graph API sendMail failed: status=%d body=%s", resp.StatusCode, excerpt)
+
+		if !isRetryable(resp.StatusCode) {
+			slog.Error("Graph API sendMail non-retryable failure",
+				"status", resp.StatusCode, "from", fromEmail, "body", excerpt)
+			break
+		}
+
+		slog.Warn("Graph API transient failure",
+			"status", resp.StatusCode, "from", fromEmail,
+			"attempt", attempt+1, "maxAttempts", retryAttempts)
+		if attempt+1 < retryAttempts {
+			delay := backoffDelay(resp, attempt, retryBaseDelay)
+			slog.Info("Backing off before retry", "delay", delay)
+			time.Sleep(delay)
+		}
 	}
-	// Provide Content-Length so the HTTP client can send the header correctly
-	// without buffering: base64 output is always (n+2)/3*4 bytes.
-	req.ContentLength = int64((len(mimeBody) + 2) / 3 * 4)
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Content-Type", "text/plain")
 
-	slog.Debug("Sending email via Microsoft Graph API", "from", fromEmail)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("Graph API request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusAccepted { // 202
-		slog.Info("Email sent successfully via Graph API", "from", fromEmail)
-		return nil
-	}
-
-	// Read and truncate error body for logging / error message.
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	excerpt := string(bodyBytes)
-	if len(excerpt) > 500 {
-		excerpt = excerpt[:500]
-	}
-
-	slog.Error("Graph API sendMail failed",
-		"status", resp.StatusCode,
-		"from", fromEmail,
-		"body", excerpt,
-	)
-	return fmt.Errorf("Graph API sendMail failed: status=%d body=%s", resp.StatusCode, excerpt)
+	slog.Error("Graph API sendMail permanently failed", "from", fromEmail, "error", lastErr)
+	return lastErr
 }

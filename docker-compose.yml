@@ -9,14 +9,62 @@ services:
         - linux/arm/v7
         - linux/arm64
     ports:
-      - "8125:8025"
+      - "8025:8025"
     volumes:
       - ./certs:/usr/src/smtp-relay/certs
     environment:
-      - LOG_LEVEL=DEBUG
-      - TLS_SOURCE=off
-      - REQUIRE_TLS=false
-      - SERVER_GREETING=Microsoft Graph SMTP GO OAuth Relay
-      - USERNAME_DELIMITER=@
-      
+      # ---------------------------------------------------------------------------
+      # Logging
+      # ---------------------------------------------------------------------------
+      - LOG_LEVEL=DEBUG               # DEBUG | INFO | WARNING | ERROR | CRITICAL  (default: WARNING)
+
+      # ---------------------------------------------------------------------------
+      # TLS
+      # ---------------------------------------------------------------------------
+      - TLS_SOURCE=off                # off | file | keyvault  (default: file)
+      - REQUIRE_TLS=false             # Require STARTTLS before AUTH  (default: true)
+      #- TLS_CERT_FILEPATH=certs/cert.pem   # PEM certificate path (TLS_SOURCE=file)
+      #- TLS_KEY_FILEPATH=certs/key.pem     # PEM private key path (TLS_SOURCE=file)
+      #- TLS_CIPHER_SUITE=            # Colon-separated OpenSSL cipher names; empty = system defaults
+      #- TLS_RELOAD_INTERVAL=0        # Seconds between cert hot-reloads; 0 = disabled  (default: 0)
+
+      # ---------------------------------------------------------------------------
+      # Azure Key Vault  (required when TLS_SOURCE=keyvault)
+      # ---------------------------------------------------------------------------
+      #- AZURE_KEY_VAULT_URL=https://<vault>.vault.azure.net/
+      #- AZURE_KEY_VAULT_CERT_NAME=<secret-name>
+
+      # ---------------------------------------------------------------------------
+      # SMTP
+      # ---------------------------------------------------------------------------
+      - SERVER_GREETING=SMTP GO Graph Relay   # EHLO banner  (default: Microsoft Graph SMTP OAuth Relay)
+      - USERNAME_DELIMITER=@                  # @ or : or |  (default: @)
+      #- SMTP_PORT=8025               # TCP listen port  (default: 8025)
+
+      # ---------------------------------------------------------------------------
+      # Azure Tables  (user credential lookup)
+      # ---------------------------------------------------------------------------
+      #- AZURE_TABLES_URL=https://<account>.table.core.windows.net/<table>
+      #- AZURE_TABLES_PARTITION_KEY=user   # Partition key for table lookups  (default: user)
+
+      # ---------------------------------------------------------------------------
+      # IP Whitelist  (skip AUTH for trusted sources; all four fields required together)
+      # ---------------------------------------------------------------------------
+      #- WHITELIST_IPS=192.168.1.0/24,10.0.0.5   # Comma-separated IPs / CIDRs (0.0.0.0/0 to allow all)
+      #- WHITELIST_TENANT_ID=<tenant-uuid>
+      #- WHITELIST_CLIENT_ID=<client-uuid>
+      #- WHITELIST_CLIENT_SECRET=<secret>
+      #- WHITELIST_FROM_EMAIL=relay@example.com   # Override From address for whitelisted sessions
+
+      # ---------------------------------------------------------------------------
+      # Reliability & performance tuning
+      # ---------------------------------------------------------------------------
+      #- MAX_MESSAGE_SIZE=36700160    # Max accepted message size in bytes  (default: 35 MB)
+      #- HTTP_TIMEOUT=30              # Graph API / OAuth HTTP timeout in seconds  (default: 30)
+      #- RETRY_ATTEMPTS=3             # Total Graph API send attempts (1 = no retry)  (default: 3)
+      #- RETRY_BASE_DELAY=1           # Base delay in seconds for exponential back-off  (default: 1)
+      #- SHUTDOWN_TIMEOUT=30          # Seconds to drain in-flight sessions on SIGTERM  (default: 30)
+
+    # Must be >= SHUTDOWN_TIMEOUT so Docker does not SIGKILL before the drain completes.
+    stop_grace_period: 35s
     restart: unless-stopped

@@ -29,7 +29,7 @@ COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 # Copy the binary
 COPY --from=build /smtp-relay /smtp-relay
 
-# Expose SMTP port
+# Expose default SMTP port (override at runtime via SMTP_PORT env var)
 EXPOSE 8025
 
 # Run the binary

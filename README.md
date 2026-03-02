@@ -1,4 +1,6 @@
-# (Go) SMTP OAuth Relay 
+# (Go) SMTP OAuth Relay — v1.1
+
+[![Build and Push Multi-Arch Docker Image](https://github.com/Palasito/go-smtp/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Palasito/go-smtp/actions/workflows/docker-publish.yml)
 
 A high-performance, statically-linked Go port of the [Python SMTP-to-Microsoft-Graph relay](../README.md).
 
@@ -9,7 +11,7 @@ It accepts SMTP connections, authenticates clients via **OAuth 2.0 client creden
 ## How it works
 
 ```
-SMTP Client → smtp-oauth-relay:8125 → Microsoft Graph API → recipient mailbox
+SMTP Client → smtp-oauth-relay:8025 → Microsoft Graph API → recipient mailbox
 ```
 
 1. Client connects and authenticates with `AUTH PLAIN` or `AUTH LOGIN`
@@ -79,7 +81,7 @@ export AZURE_TABLES_URL=https://<account>.table.core.windows.net/<table>
 
 ```bash
 docker run -d \
-  -p 8125:8025 \
+  -p 8025:8025 \
   -e TLS_SOURCE=file \
   -e TLS_CERT_FILEPATH=/certs/cert.pem \
   -e TLS_KEY_FILEPATH=/certs/key.pem \
@@ -116,6 +118,13 @@ All configuration is via environment variables. The Go version uses **exactly th
 | `WHITELIST_CLIENT_ID` | _(optional)_ | Client ID for whitelisted auto-auth |
 | `WHITELIST_CLIENT_SECRET` | _(optional)_ | Client secret for whitelisted auto-auth |
 | `WHITELIST_FROM_EMAIL` | _(optional)_ | Override From address for whitelisted sessions |
+| `SMTP_PORT` | `8025` | TCP port the relay listens on |
+| `MAX_MESSAGE_SIZE` | `36700160` | Maximum accepted message size in bytes (default 35 MB) |
+| `HTTP_TIMEOUT` | `30` | HTTP request timeout in seconds for Graph API / OAuth calls |
+| `RETRY_ATTEMPTS` | `3` | Total Graph API send attempts (1 = no retry) |
+| `RETRY_BASE_DELAY` | `1` | Base delay in seconds for exponential retry back-off |
+| `SHUTDOWN_TIMEOUT` | `30` | Seconds to wait for in-flight sessions to finish on `SIGTERM` |
+| `TLS_RELOAD_INTERVAL` | `0` | Seconds between automatic TLS certificate reloads (0 = disabled) |
 
 ---
 
@@ -125,7 +134,7 @@ A basic connectivity test script is provided:
 
 ```bash
 chmod +x scripts/test-smtp.sh
-./scripts/test-smtp.sh localhost 8125
+./scripts/test-smtp.sh localhost 8025
 ```
 
 This sends `EHLO test` and `QUIT` and prints the server response. You should see the `220` greeting and `250` EHLO capabilities listing.
@@ -144,7 +153,7 @@ This sends `EHLO test` and `QUIT` and prints the server response. You should see
 | Dependencies | pip packages, venv | Compiled in, zero runtime deps |
 | Concurrency | asyncio (single thread) | Go goroutines (multi-core) |
 
-All **environment variables**, the **username format**, and the **Azure integration** are identical. The only thing changed is the **SMTP port (8125)**, changing back to 8025 would make the Go version a drop-in replacement.
+All **environment variables**, the **SMTP port (8025)**, the **username format**, and the **Azure integration** are identical. The Go version is a drop-in replacement.
 
 ---
 
@@ -171,8 +180,9 @@ go-smtp/
 │   │   ├── oauth.go             # OAuth 2.0 client credentials token acquisition
 │   │   ├── username.go          # Username parsing (UUID/base64url, Azure Table lookup)
 │   │   └── authenticator.go     # SMTP AUTH → OAuth flow
-│   ├── graph/graph.go           # Microsoft Graph sendMail (raw MIME)
-│   ├── tls/tls.go               # TLS from PEM files or Azure Key Vault PKCS#12
+│   ├── graph/graph.go           # Microsoft Graph sendMail (raw MIME, retry + back-off)
+│   ├── httpclient/client.go     # Shared singleton HTTP client with configurable timeout
+│   ├── tls/tls.go               # TLS from PEM files or Azure Key Vault PKCS#12; auto-reload
 │   ├── whitelist/whitelist.go   # IP/CIDR whitelist with auto-auth
 │   └── server/server.go         # go-smtp Backend + Session implementation
 ├── Dockerfile                   # Multi-stage build: golang:alpine → scratch

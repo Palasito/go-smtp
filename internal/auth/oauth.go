@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/Palasito/go-smtp/internal/httpclient"
 )
 
 // tokenEndpoint is the Microsoft identity platform token URL template.
@@ -37,13 +40,16 @@ func GetAccessToken(tenantID, clientID, clientSecret string) (string, error) {
 		"scope":         {"https://graph.microsoft.com/.default"},
 	}
 
-	req, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost, endpoint, strings.NewReader(form.Encode()),
+	)
 	if err != nil {
 		return "", fmt.Errorf("failed to build token request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpclient.Client().Do(req)
 	if err != nil {
 		return "", fmt.Errorf("token request failed: %w", err)
 	}
