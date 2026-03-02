@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/mail"
 	"strings"
+	"time"
 
 	"github.com/Palasito/go-smtp/internal/auth"
 	"github.com/Palasito/go-smtp/internal/config"
@@ -221,7 +222,11 @@ func (s *Session) Data(r io.Reader) error {
 		sender = s.fromEmail
 	}
 
-	if err := graph.SendMail(s.accessToken, patched, sender); err != nil {
+	if err := graph.SendMail(
+		s.accessToken, patched, sender,
+		s.backend.Config.RetryAttempts,
+		time.Duration(s.backend.Config.RetryBaseDelay)*time.Second,
+	); err != nil {
 		slog.Error("Graph API send failed", "error", err)
 		return &smtp.SMTPError{
 			Code:         554,

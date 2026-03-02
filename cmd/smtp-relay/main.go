@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -56,7 +57,8 @@ func main() {
 	slog.Info("HTTP client initialised", "timeout", cfg.HTTPTimeout)
 
 	// --- TLS ---
-	tlsCfg, err := tlspkg.LoadTLSConfig(
+	reloadCtx, reloadCancel := context.WithCancel(context.Background())
+	tlsCfg, tlsReloader, err := tlspkg.LoadTLSConfig(
 		cfg.TLSSource,
 		cfg.TLSCertFilepath,
 		cfg.TLSKeyFilepath,
@@ -65,6 +67,7 @@ func main() {
 		cfg.AzureKeyVaultCertName,
 	)
 	if err != nil {
+		reloadCancel()
 		slog.Error("Failed to load TLS configuration", "error", err)
 		os.Exit(1)
 	}
@@ -72,6 +75,10 @@ func main() {
 		slog.Info("TLS configuration loaded", "source", cfg.TLSSource)
 	} else {
 		slog.Info("TLS disabled")
+	}
+	if tlsReloader != nil && cfg.TLSReloadInterval > 0 {
+		tlsReloader.Start(reloadCtx, time.Duration(cfg.TLSReloadInterval)*time.Second)
+		slog.Info("TLS certificate auto-reload enabled", "intervalSeconds", cfg.TLSReloadInterval)
 	}
 
 	// --- Whitelist ---
@@ -97,7 +104,7 @@ func main() {
 	}
 
 	s := gosmtp.NewServer(backend)
-	s.Addr = ":8025"
+	s.Addr = ":" + cfg.SMTPPort
 	s.Domain = cfg.ServerGreeting
 	s.MaxMessageBytes = cfg.MaxMessageSize
 	s.TLSConfig = tlsCfg
@@ -116,8 +123,14 @@ func main() {
 	<-quit
 
 	slog.Info("Shutdown signal received, stopping server")
-	if err := s.Close(); err != nil {
-		slog.Error("Error closing SMTP server", "error", err)
+	reloadCancel() // stop TLS auto-reload goroutine
+	shutdownCtx, cancel := context.WithTimeout(
+		context.Background(),
+		time.Duration(cfg.ShutdownTimeout)*time.Second,
+	)
+	defer cancel()
+	if err := s.Shutdown(shutdownCtx); err != nil {
+		slog.Error("Error during graceful shutdown", "error", err)
 	}
 	slog.Info("Server stopped")
 }

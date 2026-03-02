@@ -1,4 +1,4 @@
-# (Go) SMTP OAuth Relay 
+# (Go) SMTP OAuth Relay — v1.1
 
 [![Build and Push Multi-Arch Docker Image](https://github.com/Palasito/go-smtp/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Palasito/go-smtp/actions/workflows/docker-publish.yml)
 
@@ -118,6 +118,13 @@ All configuration is via environment variables. The Go version uses **exactly th
 | `WHITELIST_CLIENT_ID` | _(optional)_ | Client ID for whitelisted auto-auth |
 | `WHITELIST_CLIENT_SECRET` | _(optional)_ | Client secret for whitelisted auto-auth |
 | `WHITELIST_FROM_EMAIL` | _(optional)_ | Override From address for whitelisted sessions |
+| `SMTP_PORT` | `8025` | TCP port the relay listens on |
+| `MAX_MESSAGE_SIZE` | `36700160` | Maximum accepted message size in bytes (default 35 MB) |
+| `HTTP_TIMEOUT` | `30` | HTTP request timeout in seconds for Graph API / OAuth calls |
+| `RETRY_ATTEMPTS` | `3` | Total Graph API send attempts (1 = no retry) |
+| `RETRY_BASE_DELAY` | `1` | Base delay in seconds for exponential retry back-off |
+| `SHUTDOWN_TIMEOUT` | `30` | Seconds to wait for in-flight sessions to finish on `SIGTERM` |
+| `TLS_RELOAD_INTERVAL` | `0` | Seconds between automatic TLS certificate reloads (0 = disabled) |
 
 ---
 
@@ -173,8 +180,9 @@ go-smtp/
 │   │   ├── oauth.go             # OAuth 2.0 client credentials token acquisition
 │   │   ├── username.go          # Username parsing (UUID/base64url, Azure Table lookup)
 │   │   └── authenticator.go     # SMTP AUTH → OAuth flow
-│   ├── graph/graph.go           # Microsoft Graph sendMail (raw MIME)
-│   ├── tls/tls.go               # TLS from PEM files or Azure Key Vault PKCS#12
+│   ├── graph/graph.go           # Microsoft Graph sendMail (raw MIME, retry + back-off)
+│   ├── httpclient/client.go     # Shared singleton HTTP client with configurable timeout
+│   ├── tls/tls.go               # TLS from PEM files or Azure Key Vault PKCS#12; auto-reload
 │   ├── whitelist/whitelist.go   # IP/CIDR whitelist with auto-auth
 │   └── server/server.go         # go-smtp Backend + Session implementation
 ├── Dockerfile                   # Multi-stage build: golang:alpine → scratch
