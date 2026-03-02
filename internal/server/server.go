@@ -9,10 +9,10 @@ import (
 	"net/mail"
 	"strings"
 
-	"github.com/JustinIven/smtp-oauth-relay/internal/auth"
-	"github.com/JustinIven/smtp-oauth-relay/internal/config"
-	"github.com/JustinIven/smtp-oauth-relay/internal/graph"
-	"github.com/JustinIven/smtp-oauth-relay/internal/whitelist"
+	"github.com/Palasito/go-smtp/internal/auth"
+	"github.com/Palasito/go-smtp/internal/config"
+	"github.com/Palasito/go-smtp/internal/graph"
+	"github.com/Palasito/go-smtp/internal/whitelist"
 	"github.com/emersion/go-sasl"
 	smtp "github.com/emersion/go-smtp"
 )

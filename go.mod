@@ -1,4 +1,4 @@
-module github.com/JustinIven/smtp-oauth-relay
+module github.com/Palasito/go-smtp
 
 go 1.26.0
 

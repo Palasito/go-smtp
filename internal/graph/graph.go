@@ -1,11 +1,14 @@
 package graph
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+
+	"github.com/Palasito/go-smtp/internal/httpclient"
 )
 
 const sendMailEndpoint = "https://graph.microsoft.com/v1.0/users/%s/sendMail"
@@ -34,7 +37,7 @@ func SendMail(accessToken string, mimeBody []byte, fromEmail string) error {
 		pw.Close()
 	}()
 
-	req, err := http.NewRequest(http.MethodPost, url, pr)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, pr)
 	if err != nil {
 		pr.CloseWithError(err)
 		return fmt.Errorf("failed to build Graph API request: %w", err)
@@ -47,7 +50,7 @@ func SendMail(accessToken string, mimeBody []byte, fromEmail string) error {
 
 	slog.Debug("Sending email via Microsoft Graph API", "from", fromEmail)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpclient.Client().Do(req)
 	if err != nil {
 		return fmt.Errorf("Graph API request failed: %w", err)
 	}

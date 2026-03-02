@@ -5,11 +5,13 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
-	"github.com/JustinIven/smtp-oauth-relay/internal/config"
-	"github.com/JustinIven/smtp-oauth-relay/internal/server"
-	tlspkg "github.com/JustinIven/smtp-oauth-relay/internal/tls"
-	"github.com/JustinIven/smtp-oauth-relay/internal/whitelist"
+	"github.com/Palasito/go-smtp/internal/config"
+	"github.com/Palasito/go-smtp/internal/httpclient"
+	"github.com/Palasito/go-smtp/internal/server"
+	tlspkg "github.com/Palasito/go-smtp/internal/tls"
+	"github.com/Palasito/go-smtp/internal/whitelist"
 	gosmtp "github.com/emersion/go-smtp"
 )
 
@@ -48,6 +50,10 @@ func main() {
 	slog.SetDefault(logger)
 
 	slog.Info("Configuration loaded successfully")
+
+	// --- HTTP client ---
+	httpclient.Init(time.Duration(cfg.HTTPTimeout) * time.Second)
+	slog.Info("HTTP client initialised", "timeout", cfg.HTTPTimeout)
 
 	// --- TLS ---
 	tlsCfg, err := tlspkg.LoadTLSConfig(
