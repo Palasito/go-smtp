@@ -38,7 +38,7 @@ echo "Testing SMTP connection to $HOST:$PORT..."
     printf "Subject: Automated Test Email\r\n"
     printf "\r\n"
     printf "This is a test email sent from the go-smtp relay.\r\n"
-    printf ".\r\n";                      
+    printf ".\r\n";
 
     printf "QUIT\r\n";                   
 } | nc -w 10 "$HOST" "$PORT"
