@@ -21,7 +21,7 @@ services:
       # ---------------------------------------------------------------------------
       # TLS
       # ---------------------------------------------------------------------------
-      - TLS_SOURCE=off                # off | file | keyvault  (default: file)
+      - TLS_SOURCE=off                # off | auto | file | keyvault  (default: file)
       - REQUIRE_TLS=false             # Require STARTTLS before AUTH  (default: true)
       #- TLS_CERT_FILEPATH=certs/cert.pem   # PEM certificate path (TLS_SOURCE=file)
       #- TLS_KEY_FILEPATH=certs/key.pem     # PEM private key path (TLS_SOURCE=file)
@@ -64,6 +64,17 @@ services:
       #- RETRY_ATTEMPTS=3             # Total Graph API send attempts (1 = no retry)  (default: 3)
       #- RETRY_BASE_DELAY=1           # Base delay in seconds for exponential back-off  (default: 1)
       #- SHUTDOWN_TIMEOUT=30          # Seconds to drain in-flight sessions on SIGTERM  (default: 30)
+      #- TOKEN_CACHE_MARGIN=300        # Seconds before token expiry to treat cache as stale  (default: 300)
+
+      # ---------------------------------------------------------------------------
+      # Privacy
+      # ---------------------------------------------------------------------------
+      #- SANITIZE_HEADERS=false       # Strip Received/X-Originating-IP/X-Mailer/User-Agent etc.  (default: false)
+
+      # ---------------------------------------------------------------------------
+      # Notifications
+      # ---------------------------------------------------------------------------
+      #- FAILURE_WEBHOOK_URL=         # HTTP(S) endpoint to POST JSON payload on permanent send failure
 
     # Must be >= SHUTDOWN_TIMEOUT so Docker does not SIGKILL before the drain completes.
     stop_grace_period: 35s
