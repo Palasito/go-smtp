@@ -1,5 +1,6 @@
 services:
   relay-node:
+    container_name: go-smtp-relay
     image: ghcr.io/palasito/go-smtp:latest
     build:
       context: .
