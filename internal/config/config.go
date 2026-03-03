@@ -13,7 +13,7 @@ type Config struct {
 	LogLevel string // LOG_LEVEL — default "WARNING", valid: DEBUG/INFO/WARNING/ERROR/CRITICAL
 
 	// TLS
-	TLSSource       string // TLS_SOURCE — default "file", valid: off/file/keyvault
+	TLSSource       string // TLS_SOURCE — default "file", valid: off/auto/file/keyvault
 	RequireTLS      bool   // REQUIRE_TLS — default true
 	TLSCertFilepath string // TLS_CERT_FILEPATH — default "certs/cert.pem"
 	TLSKeyFilepath  string // TLS_KEY_FILEPATH — default "certs/key.pem"
@@ -46,11 +46,14 @@ type Config struct {
 	RetryBaseDelay    int    // RETRY_BASE_DELAY — default 1 (seconds), must be >0
 	ShutdownTimeout   int    // SHUTDOWN_TIMEOUT — default 30 (seconds), must be >0
 	TLSReloadInterval int    // TLS_RELOAD_INTERVAL — default 300 (seconds), 0 = disabled
+	TokenCacheMargin  int    // TOKEN_CACHE_MARGIN — default 300 (seconds), subtracted from token expires_in; must be >=0
+	SanitizeHeaders   bool   // SANITIZE_HEADERS — default false, strip privacy-sensitive headers before relaying
+	FailureWebhookURL string // FAILURE_WEBHOOK_URL — optional, HTTP(S) endpoint to POST on permanent send failure
 }
 
 var (
 	validLogLevels  = []string{"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
-	validTLSSources = []string{"off", "file", "keyvault"}
+	validTLSSources = []string{"off", "auto", "file", "keyvault"}
 	validDelimiters = []string{"@", ":", "|"}
 )
 
@@ -221,6 +224,43 @@ func Load() (*Config, error) {
 		)
 	}
 	cfg.TLSReloadInterval = tlsReload
+
+	// --- TOKEN_CACHE_MARGIN ---
+	tokenCacheMarginStr := getEnvOrDefault("TOKEN_CACHE_MARGIN", "300")
+	tokenCacheMargin, err := strconv.Atoi(tokenCacheMarginStr)
+	if err != nil || tokenCacheMargin < 0 {
+		return nil, fmt.Errorf(
+			"invalid TOKEN_CACHE_MARGIN %q: must be a non-negative integer (seconds)",
+			tokenCacheMarginStr,
+		)
+	}
+	cfg.TokenCacheMargin = tokenCacheMargin
+
+	// --- SANITIZE_HEADERS ---
+	sanitizeStr := strings.ToLower(getEnvOrDefault("SANITIZE_HEADERS", "false"))
+	switch sanitizeStr {
+	case "true":
+		cfg.SanitizeHeaders = true
+	case "false":
+		cfg.SanitizeHeaders = false
+	default:
+		return nil, fmt.Errorf(
+			"invalid SANITIZE_HEADERS %q: must be \"true\" or \"false\"",
+			sanitizeStr,
+		)
+	}
+
+	// --- FAILURE_WEBHOOK_URL ---
+	failureWebhook := os.Getenv("FAILURE_WEBHOOK_URL")
+	if failureWebhook != "" &&
+		!strings.HasPrefix(failureWebhook, "http://") &&
+		!strings.HasPrefix(failureWebhook, "https://") {
+		return nil, fmt.Errorf(
+			"invalid FAILURE_WEBHOOK_URL %q: must start with http:// or https://",
+			failureWebhook,
+		)
+	}
+	cfg.FailureWebhookURL = failureWebhook
 
 	// If WHITELIST_IPS is set, the OAuth credentials must also be provided.
 	if cfg.WhitelistIPs != "" {

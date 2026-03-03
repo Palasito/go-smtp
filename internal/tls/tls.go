@@ -5,11 +5,17 @@ package tls
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	cryptotls "crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"math/big"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -96,6 +102,13 @@ func LoadTLSConfig(source, certPath, keyPath, cipherSuite, kvURL, kvCertName str
 	case "off":
 		return nil, nil, nil
 
+	case "auto":
+		cfg, err := generateSelfSigned(cipherSuite)
+		if err != nil {
+			return nil, nil, err
+		}
+		return cfg, nil, nil // no reloader — regenerated on restart
+
 	case "file":
 		return loadFromFile(certPath, keyPath, cipherSuite)
 
@@ -103,8 +116,66 @@ func LoadTLSConfig(source, certPath, keyPath, cipherSuite, kvURL, kvCertName str
 		return loadFromKeyVault(kvURL, kvCertName, cipherSuite)
 
 	default:
-		return nil, nil, fmt.Errorf("unknown TLS source %q: must be off, file, or keyvault", source)
+		return nil, nil, fmt.Errorf("unknown TLS source %q: must be off, auto, file, or keyvault", source)
 	}
+}
+
+// generateSelfSigned creates an in-memory ECDSA P-256 self-signed certificate
+// so that STARTTLS can be offered without provisioning external certificates.
+// The certificate is regenerated on every restart; no CertReloader is needed.
+func generateSelfSigned(cipherSuite string) (*cryptotls.Config, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate ECDSA key: %w", err)
+	}
+
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate serial number: %w", err)
+	}
+
+	now := time.Now()
+	template := &x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			CommonName:   "go-smtp-relay",
+			Organization: []string{"go-smtp-relay (auto-generated)"},
+		},
+		NotBefore:             now,
+		NotAfter:              now.Add(10 * 365 * 24 * time.Hour), // ~10 years
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		DNSNames:              []string{"localhost"},
+		IPAddresses:           []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create self-signed certificate: %w", err)
+	}
+
+	leaf, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse generated certificate: %w", err)
+	}
+
+	tlsCert := cryptotls.Certificate{
+		Certificate: [][]byte{certDER},
+		PrivateKey:  key,
+		Leaf:        leaf, // avoids re-parsing on every handshake
+	}
+
+	cfg := &cryptotls.Config{
+		Certificates: []cryptotls.Certificate{tlsCert},
+	}
+	applyCipherSuites(cfg, cipherSuite)
+
+	slog.Info("Auto-generated self-signed TLS certificate",
+		"cn", "go-smtp-relay",
+		"notAfter", leaf.NotAfter.Format(time.RFC3339),
+	)
+	return cfg, nil
 }
 
 // loadFromFile loads a PEM certificate and key from the local filesystem.

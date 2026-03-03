@@ -1,10 +1,16 @@
-# (Go) SMTP OAuth Relay — v1.1
+# (Go) SMTP OAuth Relay — v1.2
 
 [![Docker Image](https://github.com/Palasito/go-smtp/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Palasito/go-smtp/actions/workflows/docker-publish.yml)
 
 A high-performance, statically-linked Go port of the [Python SMTP-to-Microsoft-Graph relay](../README.md).
 
 It accepts SMTP connections, authenticates clients via **OAuth 2.0 client credentials**, and delivers messages through the **Microsoft Graph API** (`sendMail`). It is a **drop-in replacement** for the Python version — all environment variables, the SMTP port, and the observable behaviour are identical.
+
+## What's new in v1.2
+
+- **OAuth token caching** — access tokens are cached in memory (keyed by `SHA-256(tenantID+clientID+clientSecret)`) and reused until near-expiry, eliminating redundant Azure AD round-trips. Wrong credentials always miss the cache. Configurable safety margin via `TOKEN_CACHE_MARGIN`.
+- **Header sanitization** — when `SANITIZE_HEADERS=true`, privacy-sensitive headers (`Received`, `X-Originating-IP`, `X-Mailer`, `User-Agent`, etc.) are stripped from the message before it is forwarded to Graph API.
+- **Failure webhook** — set `FAILURE_WEBHOOK_URL` to receive a JSON `POST` whenever a message permanently fails delivery (after all retry attempts). Best-effort, fire-and-forget — never blocks or affects the SMTP response to the client.
 
 ---
 
@@ -102,7 +108,7 @@ All configuration is via environment variables. The Go version uses **exactly th
 | Variable | Default | Description |
 |---|---|---|
 | `LOG_LEVEL` | `WARNING` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
-| `TLS_SOURCE` | `file` | `off` / `file` / `keyvault` |
+| `TLS_SOURCE` | `file` | `off` / `auto` / `file` / `keyvault` — `auto` generates a self-signed ECDSA certificate at startup so STARTTLS works without provisioning certs |
 | `REQUIRE_TLS` | `true` | Require STARTTLS before AUTH |
 | `SERVER_GREETING` | `Microsoft Graph SMTP OAuth Relay` | EHLO banner string |
 | `TLS_CERT_FILEPATH` | `certs/cert.pem` | PEM certificate path (TLS_SOURCE=file) |
@@ -125,6 +131,9 @@ All configuration is via environment variables. The Go version uses **exactly th
 | `RETRY_BASE_DELAY` | `1` | Base delay in seconds for exponential retry back-off |
 | `SHUTDOWN_TIMEOUT` | `30` | Seconds to wait for in-flight sessions to finish on `SIGTERM` |
 | `TLS_RELOAD_INTERVAL` | `0` | Seconds between automatic TLS certificate reloads (0 = disabled) |
+| `TOKEN_CACHE_MARGIN` | `300` | Seconds before token expiry at which the cache is considered stale and a fresh token is fetched |
+| `SANITIZE_HEADERS` | `false` | Strip privacy-sensitive headers (`Received`, `X-Originating-IP`, `X-Mailer`, `User-Agent`, etc.) before relaying |
+| `FAILURE_WEBHOOK_URL` | _(optional)_ | HTTP(S) URL to `POST` a JSON payload to on permanent delivery failure |
 
 ---
 
@@ -178,11 +187,13 @@ go-smtp/
 │   ├── config/config.go         # Environment variable loading and validation
 │   ├── auth/
 │   │   ├── oauth.go             # OAuth 2.0 client credentials token acquisition
+│   │   ├── tokencache.go        # In-memory token cache (SHA-256 keyed, TTL-based)
 │   │   ├── username.go          # Username parsing (UUID/base64url, Azure Table lookup)
 │   │   └── authenticator.go     # SMTP AUTH → OAuth flow
 │   ├── graph/graph.go           # Microsoft Graph sendMail (raw MIME, retry + back-off)
 │   ├── httpclient/client.go     # Shared singleton HTTP client with configurable timeout
-│   ├── tls/tls.go               # TLS from PEM files or Azure Key Vault PKCS#12; auto-reload
+│   ├── tls/tls.go               # TLS from PEM files, Azure Key Vault PKCS#12, or auto-generated self-signed; auto-reload
+│   ├── webhook/webhook.go       # Best-effort HTTP notification on permanent delivery failure
 │   ├── whitelist/whitelist.go   # IP/CIDR whitelist with auto-auth
 │   └── server/server.go         # go-smtp Backend + Session implementation
 ├── Dockerfile                   # Multi-stage build: golang:alpine → scratch

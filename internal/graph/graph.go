@@ -29,6 +29,16 @@ func isRetryable(code int) bool {
 	return false
 }
 
+// PermanentError wraps a Graph API failure caused by a non-retryable HTTP status
+// (e.g. 400 Bad Request, 403 Forbidden). The SMTP layer uses this type to issue a
+// permanent 5xx rejection rather than a temporary 4xx that invites the client to retry.
+type PermanentError struct {
+	err error
+}
+
+func (e *PermanentError) Error() string { return e.err.Error() }
+func (e *PermanentError) Unwrap() error { return e.err }
+
 // backoffDelay calculates the wait before the next attempt.
 // If the response carries a Retry-After header (integer seconds) its value
 // takes priority.  Otherwise exponential back-off is used: base * 2^attempt,
@@ -96,6 +106,7 @@ func SendMail(accessToken string, mimeBody []byte, fromEmail string, retryAttemp
 	ctx := context.Background()
 
 	var lastErr error
+	var permanent bool
 	for attempt := 0; attempt < retryAttempts; attempt++ {
 		slog.Debug("Sending email via Microsoft Graph API", "from", fromEmail, "attempt", attempt+1)
 
@@ -130,6 +141,7 @@ func SendMail(accessToken string, mimeBody []byte, fromEmail string, retryAttemp
 		if !isRetryable(resp.StatusCode) {
 			slog.Error("Graph API sendMail non-retryable failure",
 				"status", resp.StatusCode, "from", fromEmail, "body", excerpt)
+			permanent = true
 			break
 		}
 
@@ -143,6 +155,10 @@ func SendMail(accessToken string, mimeBody []byte, fromEmail string, retryAttemp
 		}
 	}
 
-	slog.Error("Graph API sendMail permanently failed", "from", fromEmail, "error", lastErr)
+	if permanent {
+		slog.Error("Graph API sendMail permanently failed", "from", fromEmail, "error", lastErr)
+		return &PermanentError{err: lastErr}
+	}
+	slog.Error("Graph API sendMail retries exhausted", "from", fromEmail, "error", lastErr)
 	return lastErr
 }

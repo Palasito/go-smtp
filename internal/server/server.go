@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"github.com/Palasito/go-smtp/internal/auth"
 	"github.com/Palasito/go-smtp/internal/config"
 	"github.com/Palasito/go-smtp/internal/graph"
+	"github.com/Palasito/go-smtp/internal/webhook"
 	"github.com/Palasito/go-smtp/internal/whitelist"
 	"github.com/emersion/go-sasl"
 	smtp "github.com/emersion/go-smtp"
@@ -216,6 +218,11 @@ func (s *Session) Data(r io.Reader) error {
 		}
 	}
 
+	// Optionally strip privacy-sensitive headers before forwarding.
+	if s.backend.Config.SanitizeHeaders {
+		patched = sanitizeHeaders(patched)
+	}
+
 	// Determine effective sender: fromEmail (from lookup/whitelist) takes priority.
 	sender := s.from
 	if s.fromEmail != "" {
@@ -228,10 +235,31 @@ func (s *Session) Data(r io.Reader) error {
 		time.Duration(s.backend.Config.RetryBaseDelay)*time.Second,
 	); err != nil {
 		slog.Error("Graph API send failed", "error", err)
+		if s.backend.Config.FailureWebhookURL != "" {
+			go webhook.NotifyFailure(s.backend.Config.FailureWebhookURL, webhook.FailurePayload{
+				From:      sender,
+				To:        s.to,
+				Error:     err.Error(),
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+				Attempts:  s.backend.Config.RetryAttempts,
+			})
+		}
+		// Permanent failures (e.g. 400 Bad Request, 403 Forbidden from Graph) get a 5xx so
+		// the client does not uselessly retry a message that will never be accepted.
+		// All other failures (transient Graph errors, network issues, retry exhaustion)
+		// get a 4xx temporary response so the SMTP client queues and retries automatically.
+		var permErr *graph.PermanentError
+		if errors.As(err, &permErr) {
+			return &smtp.SMTPError{
+				Code:         554,
+				EnhancedCode: smtp.EnhancedCode{5, 0, 0},
+				Message:      "Transaction failed",
+			}
+		}
 		return &smtp.SMTPError{
-			Code:         554,
-			EnhancedCode: smtp.EnhancedCode{5, 0, 0},
-			Message:      "Transaction failed",
+			Code:         451,
+			EnhancedCode: smtp.EnhancedCode{4, 4, 1},
+			Message:      "Temporary delivery failure, please retry later",
 		}
 	}
 
@@ -248,6 +276,68 @@ func (s *Session) Reset() {
 // Logout is called when the client disconnects.
 func (s *Session) Logout() error {
 	return nil
+}
+
+// sanitizeHeaders removes headers that could reveal the originating client's
+// identity or infrastructure. Called when SANITIZE_HEADERS=true.
+// If parsing fails the original bytes are returned unchanged (delivery is never
+// blocked due to sanitization).
+func sanitizeHeaders(input []byte) []byte {
+	// Headers to strip — case-insensitive match via net/mail canonical form.
+	privacyHeaders := []string{
+		"Received",
+		"X-Originating-Ip",
+		"X-Mailer",
+		"User-Agent",
+		"X-Forwarded-To",
+		"X-Forwarded-For",
+		"X-Original-To",
+	}
+
+	// net/mail canonicalises header names ("x-mailer" → "X-Mailer"), so we
+	// compare against the canonical forms stored in privacyHeaders above.
+	norm := bytes.ReplaceAll(input, []byte("\r\n"), []byte("\n"))
+	norm = bytes.ReplaceAll(norm, []byte("\r"), []byte("\n"))
+	norm = bytes.ReplaceAll(norm, []byte("\n"), []byte("\r\n"))
+
+	msg, err := mail.ReadMessage(bytes.NewReader(norm))
+	if err != nil {
+		slog.Debug("sanitizeHeaders: failed to parse message, skipping sanitization", "error", err)
+		return input
+	}
+
+	removed := []string{}
+	for _, h := range privacyHeaders {
+		if _, exists := msg.Header[h]; exists {
+			delete(msg.Header, h)
+			removed = append(removed, h)
+		}
+	}
+	if len(removed) > 0 {
+		slog.Debug("sanitizeHeaders: removed privacy headers", "headers", removed)
+	} else {
+		slog.Debug("sanitizeHeaders: no privacy headers found to remove")
+	}
+
+	body, err := io.ReadAll(msg.Body)
+	if err != nil {
+		slog.Debug("sanitizeHeaders: failed to read body, skipping sanitization", "error", err)
+		return input
+	}
+
+	var buf bytes.Buffer
+	for key, vals := range msg.Header {
+		for _, v := range vals {
+			fmt.Fprintf(&buf, "%s: %s\r\n", key, v)
+		}
+	}
+	buf.WriteString("\r\n")
+	body = bytes.ReplaceAll(body, []byte("\r\n"), []byte("\n"))
+	body = bytes.ReplaceAll(body, []byte("\r"), []byte("\n"))
+	body = bytes.ReplaceAll(body, []byte("\n"), []byte("\r\n"))
+	buf.Write(body)
+
+	return buf.Bytes()
 }
 
 // patchHeaders manipulates the MIME message to ensure the To: and From: headers

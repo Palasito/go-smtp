@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Palasito/go-smtp/internal/auth"
 	"github.com/Palasito/go-smtp/internal/config"
 	"github.com/Palasito/go-smtp/internal/httpclient"
 	"github.com/Palasito/go-smtp/internal/server"
@@ -55,6 +56,10 @@ func main() {
 	// --- HTTP client ---
 	httpclient.Init(time.Duration(cfg.HTTPTimeout) * time.Second)
 	slog.Info("HTTP client initialised", "timeout", cfg.HTTPTimeout)
+
+	// --- OAuth token cache ---
+	auth.SetTokenCacheMargin(cfg.TokenCacheMargin)
+	slog.Info("OAuth token cache initialised", "marginSeconds", cfg.TokenCacheMargin)
 
 	// --- TLS ---
 	reloadCtx, reloadCancel := context.WithCancel(context.Background())
