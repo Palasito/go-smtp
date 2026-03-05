@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Palasito/go-smtp/internal/httpclient"
+	"github.com/Palasito/go-smtp/internal/metrics"
 )
 
 // FailurePayload is the JSON body POSTed to the webhook URL on a permanent
@@ -35,12 +36,14 @@ func NotifyFailure(webhookURL string, payload FailurePayload) {
 
 	body, err := json.Marshal(payload)
 	if err != nil {
+		metrics.WebhookTotal.WithLabelValues("failure").Inc()
 		slog.Warn("Webhook: failed to marshal payload", "error", err)
 		return
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(body))
 	if err != nil {
+		metrics.WebhookTotal.WithLabelValues("failure").Inc()
 		slog.Warn("Webhook: failed to build request", "url", webhookURL, "error", err)
 		return
 	}
@@ -48,16 +51,19 @@ func NotifyFailure(webhookURL string, payload FailurePayload) {
 
 	resp, err := httpclient.Client().Do(req)
 	if err != nil {
+		metrics.WebhookTotal.WithLabelValues("failure").Inc()
 		slog.Warn("Webhook: delivery failed", "url", webhookURL, "error", err)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		metrics.WebhookTotal.WithLabelValues("failure").Inc()
 		slog.Warn("Webhook: non-2xx response", "url", webhookURL, "status", resp.StatusCode)
 		return
 	}
 
+	metrics.WebhookTotal.WithLabelValues("success").Inc()
 	slog.Info("Webhook: failure notification delivered", "url", webhookURL,
 		"from", payload.From, "status", fmt.Sprintf("%d", resp.StatusCode))
 }

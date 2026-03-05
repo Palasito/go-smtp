@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Palasito/go-smtp/internal/httpclient"
+	"github.com/Palasito/go-smtp/internal/metrics"
 )
 
 // tokenEndpoint is the Microsoft identity platform token URL template.
@@ -37,9 +38,11 @@ func GetAccessToken(tenantID, clientID, clientSecret string) (string, error) {
 	// and will never match a previously cached entry for different credentials.
 	key := CacheKey(tenantID, clientID, clientSecret)
 	if cached, ok := GetCachedToken(key); ok {
+		metrics.TokenCacheHits.Inc()
 		slog.Debug("OAuth access token served from cache", "tenant", tenantID, "client_id", clientID)
 		return cached, nil
 	}
+	metrics.TokenCacheMisses.Inc()
 
 	endpoint := fmt.Sprintf(tokenEndpoint, tenantID)
 

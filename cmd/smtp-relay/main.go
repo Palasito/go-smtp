@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/Palasito/go-smtp/internal/auth"
 	"github.com/Palasito/go-smtp/internal/config"
+	"github.com/Palasito/go-smtp/internal/health"
 	"github.com/Palasito/go-smtp/internal/httpclient"
 	"github.com/Palasito/go-smtp/internal/server"
 	tlspkg "github.com/Palasito/go-smtp/internal/tls"
@@ -114,6 +116,12 @@ func main() {
 	s.MaxMessageBytes = cfg.MaxMessageSize
 	s.TLSConfig = tlsCfg
 	s.AllowInsecureAuth = !cfg.RequireTLS
+	s.ReadTimeout = time.Duration(cfg.SMTPReadTimeout) * time.Second
+	s.WriteTimeout = time.Duration(cfg.SMTPWriteTimeout) * time.Second
+	slog.Info("SMTP server configured",
+		"readTimeout", cfg.SMTPReadTimeout,
+		"writeTimeout", cfg.SMTPWriteTimeout,
+	)
 
 	go func() {
 		slog.Info("SMTP server starting", "addr", s.Addr, "requireTLS", cfg.RequireTLS)
@@ -122,10 +130,88 @@ func main() {
 		}
 	}()
 
-	// Block until SIGINT or SIGTERM is received.
+	// --- Health / readiness HTTP server ---
+	healthSrv := &http.Server{
+		Addr:    ":" + cfg.HealthPort,
+		Handler: health.NewMux(func() error { return nil }),
+	}
+	go func() {
+		slog.Info("Health server starting", "addr", healthSrv.Addr)
+		if err := healthSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("Health server stopped", "error", err)
+		}
+	}()
+
+	// Block until SIGINT/SIGTERM (shutdown) or SIGHUP (config reload).
 	quit := make(chan os.Signal, 1)
+	hup := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	signal.Notify(hup, syscall.SIGHUP)
+
+loop:
+	for {
+		select {
+		case <-quit:
+			break loop
+
+		case <-hup:
+			slog.Info("SIGHUP received, reloading configuration")
+			newCfg, reloadErr := config.Load()
+			if reloadErr != nil {
+				slog.Warn("Configuration reload failed, keeping current config", "error", reloadErr)
+				continue
+			}
+
+			// Fields that cannot be changed without a full restart — warn only.
+			if newCfg.SMTPPort != cfg.SMTPPort {
+				slog.Warn("SIGHUP: SMTP_PORT change ignored — requires restart",
+					"current", cfg.SMTPPort, "new", newCfg.SMTPPort)
+			}
+			if newCfg.HealthPort != cfg.HealthPort {
+				slog.Warn("SIGHUP: HEALTH_PORT change ignored — requires restart",
+					"current", cfg.HealthPort, "new", newCfg.HealthPort)
+			}
+			if newCfg.TLSSource != cfg.TLSSource {
+				slog.Warn("SIGHUP: TLS_SOURCE change ignored — requires restart",
+					"current", cfg.TLSSource, "new", newCfg.TLSSource)
+			}
+
+			// Log level.
+			if newCfg.LogLevel != cfg.LogLevel {
+				lvl = logLevelFromString(newCfg.LogLevel)
+				slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout,
+					&slog.HandlerOptions{Level: lvl})))
+				slog.Info("Log level updated", "level", newCfg.LogLevel)
+			}
+
+			// OAuth token cache margin.
+			if newCfg.TokenCacheMargin != cfg.TokenCacheMargin {
+				auth.SetTokenCacheMargin(newCfg.TokenCacheMargin)
+				slog.Info("Token cache margin updated", "marginSeconds", newCfg.TokenCacheMargin)
+			}
+
+			// HTTP client timeout.
+			if newCfg.HTTPTimeout != cfg.HTTPTimeout {
+				httpclient.Init(time.Duration(newCfg.HTTPTimeout) * time.Second)
+				slog.Info("HTTP client timeout updated", "timeoutSeconds", newCfg.HTTPTimeout)
+			}
+
+			// SMTP session timeouts (effective for new connections).
+			if newCfg.SMTPReadTimeout != cfg.SMTPReadTimeout {
+				s.ReadTimeout = time.Duration(newCfg.SMTPReadTimeout) * time.Second
+				slog.Info("SMTP ReadTimeout updated", "readTimeoutSeconds", newCfg.SMTPReadTimeout)
+			}
+			if newCfg.SMTPWriteTimeout != cfg.SMTPWriteTimeout {
+				s.WriteTimeout = time.Duration(newCfg.SMTPWriteTimeout) * time.Second
+				slog.Info("SMTP WriteTimeout updated", "writeTimeoutSeconds", newCfg.SMTPWriteTimeout)
+			}
+
+			// Hot-swap backend config — picked up by all subsequent sessions.
+			backend.Config = newCfg
+			cfg = newCfg
+			slog.Info("Configuration reloaded successfully")
+		}
+	}
 
 	slog.Info("Shutdown signal received, stopping server")
 	reloadCancel() // stop TLS auto-reload goroutine
@@ -134,6 +220,9 @@ func main() {
 		time.Duration(cfg.ShutdownTimeout)*time.Second,
 	)
 	defer cancel()
+	if err := healthSrv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("Error shutting down health server", "error", err)
+	}
 	if err := s.Shutdown(shutdownCtx); err != nil {
 		slog.Error("Error during graceful shutdown", "error", err)
 	}

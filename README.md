@@ -1,10 +1,17 @@
-# (Go) SMTP OAuth Relay — v1.2
+# (Go) SMTP OAuth Relay — v1.3
 
 [![Docker Image](https://github.com/Palasito/go-smtp/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Palasito/go-smtp/actions/workflows/docker-publish.yml)
 
 A high-performance, statically-linked Go port of the [Python SMTP-to-Microsoft-Graph relay](../README.md).
 
 It accepts SMTP connections, authenticates clients via **OAuth 2.0 client credentials**, and delivers messages through the **Microsoft Graph API** (`sendMail`). It is a **drop-in replacement** for the Python version — all environment variables, the SMTP port, and the observable behaviour are identical.
+
+## What's new in v1.3
+
+- **SMTP session timeouts** — `SMTP_READ_TIMEOUT` and `SMTP_WRITE_TIMEOUT` cap idle reads and writes at the TCP level, protecting against slow or stalled clients that could otherwise hold connections open indefinitely.
+- **Health and readiness probes** — a lightweight HTTP server (default port `9090`) exposes `GET /healthz` (liveness) and `GET /readyz` (readiness) for use with Kubernetes, Docker, and load balancers. `GET /` serves an interactive HTML status dashboard with live auto-refresh.
+- **Prometheus metrics** — `GET /metrics` on the same health port serves an interactive HTML dashboard with grouped metric families, search, human-readable value formatting (bytes → KB/MB/GB, seconds → ms/s, ratios → %), and 15 s auto-refresh. `GET /metrics?$output=text` returns the raw Prometheus text format for scraper ingestion. Metrics covered: SMTP active connections, auth totals, message delivery counters and size histogram, Graph API latency and attempt histograms, OAuth token cache hit/miss counters, and webhook notification counters.
+- **SIGHUP config reload** — send `SIGHUP` to the process to hot-reload all reloadable fields (log level, timeouts, retry settings, webhook URL, etc.) without restarting. Non-reloadable fields (`SMTP_PORT`, `HEALTH_PORT`, `TLS_SOURCE`) are detected and a warning is logged.
 
 ## What's new in v1.2
 
@@ -134,6 +141,25 @@ All configuration is via environment variables. The Go version uses **exactly th
 | `TOKEN_CACHE_MARGIN` | `300` | Seconds before token expiry at which the cache is considered stale and a fresh token is fetched |
 | `SANITIZE_HEADERS` | `false` | Strip privacy-sensitive headers (`Received`, `X-Originating-IP`, `X-Mailer`, `User-Agent`, etc.) before relaying |
 | `FAILURE_WEBHOOK_URL` | _(optional)_ | HTTP(S) URL to `POST` a JSON payload to on permanent delivery failure |
+| `SMTP_READ_TIMEOUT` | `60` | Seconds before an idle SMTP read is timed out (per connection) |
+| `SMTP_WRITE_TIMEOUT` | `60` | Seconds before an idle SMTP write is timed out (per connection) |
+| `HEALTH_PORT` | `9090` | TCP port for the health/readiness/metrics HTTP server |
+
+---
+
+## Health & metrics endpoints
+
+The relay exposes a secondary HTTP server (default `:9090`) alongside the SMTP listener:
+
+| Route | Method | Description |
+|---|---|---|
+| `/` | `GET` | Interactive status dashboard (HTML) — live liveness/readiness/metrics cards, auto-refreshes every 5 s |
+| `/healthz` | `GET` | Liveness probe — always `200 OK` while the process is alive |
+| `/readyz` | `GET` | Readiness probe — `200 OK` / `503` |
+| `/metrics` | `GET` | Interactive Prometheus metrics dashboard (HTML) — grouped metric families, search, auto-refreshes every 15 s |
+| `/metrics?$output=text` | `GET` | Raw Prometheus text exposition format for scraper ingestion |
+
+Set `HEALTH_PORT` to change the port. All endpoints are unauthenticated — bind the health server to a private interface or apply network-level access controls as appropriate.
 
 ---
 
@@ -191,7 +217,9 @@ go-smtp/
 │   │   ├── username.go          # Username parsing (UUID/base64url, Azure Table lookup)
 │   │   └── authenticator.go     # SMTP AUTH → OAuth flow
 │   ├── graph/graph.go           # Microsoft Graph sendMail (raw MIME, retry + back-off)
+│   ├── health/health.go         # Liveness, readiness, and Prometheus /metrics HTTP handlers
 │   ├── httpclient/client.go     # Shared singleton HTTP client with configurable timeout
+│   ├── metrics/metrics.go       # Prometheus metric declarations (default registry)
 │   ├── tls/tls.go               # TLS from PEM files, Azure Key Vault PKCS#12, or auto-generated self-signed; auto-reload
 │   ├── webhook/webhook.go       # Best-effort HTTP notification on permanent delivery failure
 │   ├── whitelist/whitelist.go   # IP/CIDR whitelist with auto-auth

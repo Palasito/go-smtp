@@ -40,11 +40,14 @@ type Config struct {
 
 	// Server tuning
 	SMTPPort          string // SMTP_PORT — default "8025", valid port 1–65535
+	HealthPort        string // HEALTH_PORT — default "9090", valid port 1–65535
 	MaxMessageSize    int64  // MAX_MESSAGE_SIZE — default 36700160 (35 MB), must be >0
 	HTTPTimeout       int    // HTTP_TIMEOUT — default 30 (seconds), must be >0
 	RetryAttempts     int    // RETRY_ATTEMPTS — default 3, valid 1–10
 	RetryBaseDelay    int    // RETRY_BASE_DELAY — default 1 (seconds), must be >0
 	ShutdownTimeout   int    // SHUTDOWN_TIMEOUT — default 30 (seconds), must be >0
+	SMTPReadTimeout   int    // SMTP_READ_TIMEOUT — default 60 (seconds), must be >0
+	SMTPWriteTimeout  int    // SMTP_WRITE_TIMEOUT — default 60 (seconds), must be >0
 	TLSReloadInterval int    // TLS_RELOAD_INTERVAL — default 300 (seconds), 0 = disabled
 	TokenCacheMargin  int    // TOKEN_CACHE_MARGIN — default 300 (seconds), subtracted from token expires_in; must be >=0
 	SanitizeHeaders   bool   // SANITIZE_HEADERS — default false, strip privacy-sensitive headers before relaying
@@ -159,6 +162,17 @@ func Load() (*Config, error) {
 	}
 	cfg.SMTPPort = smtpPort
 
+	// --- HEALTH_PORT ---
+	healthPort := getEnvOrDefault("HEALTH_PORT", "9090")
+	healthPortNum, err := strconv.Atoi(healthPort)
+	if err != nil || healthPortNum < 1 || healthPortNum > 65535 {
+		return nil, fmt.Errorf(
+			"invalid HEALTH_PORT %q: must be an integer between 1 and 65535",
+			healthPort,
+		)
+	}
+	cfg.HealthPort = healthPort
+
 	// --- MAX_MESSAGE_SIZE ---
 	maxMsgStr := getEnvOrDefault("MAX_MESSAGE_SIZE", "36700160")
 	maxMsg, err := strconv.ParseInt(maxMsgStr, 10, 64)
@@ -213,6 +227,28 @@ func Load() (*Config, error) {
 		)
 	}
 	cfg.ShutdownTimeout = shutdownTimeout
+
+	// --- SMTP_READ_TIMEOUT ---
+	smtpReadStr := getEnvOrDefault("SMTP_READ_TIMEOUT", "60")
+	smtpRead, err := strconv.Atoi(smtpReadStr)
+	if err != nil || smtpRead <= 0 {
+		return nil, fmt.Errorf(
+			"invalid SMTP_READ_TIMEOUT %q: must be a positive integer (seconds)",
+			smtpReadStr,
+		)
+	}
+	cfg.SMTPReadTimeout = smtpRead
+
+	// --- SMTP_WRITE_TIMEOUT ---
+	smtpWriteStr := getEnvOrDefault("SMTP_WRITE_TIMEOUT", "60")
+	smtpWrite, err := strconv.Atoi(smtpWriteStr)
+	if err != nil || smtpWrite <= 0 {
+		return nil, fmt.Errorf(
+			"invalid SMTP_WRITE_TIMEOUT %q: must be a positive integer (seconds)",
+			smtpWriteStr,
+		)
+	}
+	cfg.SMTPWriteTimeout = smtpWrite
 
 	// --- TLS_RELOAD_INTERVAL ---
 	tlsReloadStr := getEnvOrDefault("TLS_RELOAD_INTERVAL", "300")
