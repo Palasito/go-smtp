@@ -20,17 +20,17 @@ echo "Testing SMTP connection to $HOST:$PORT..."
 # as required by RFC 5321.  A trailing sleep keeps stdin open long enough for
 # the server to send its final response before nc exits and closes the socket.
 {
-    printf "EHLO test\r\n";            
+    printf "EHLO test\r\n";            sleep 1
 
     if [[ -n "$USERNAME" && -n "$PASSWORD" ]]; then
         # AUTH PLAIN — base64("\0username\0password")
         CREDS=$(printf '\0%s\0%s' "$USERNAME" "$PASSWORD" | base64)
-        printf "AUTH PLAIN %s\r\n" "$CREDS"; 
+        printf "AUTH PLAIN %s\r\n" "$CREDS"; sleep 1
     fi
 
-    printf "MAIL FROM:<%s>\r\n" "$FROM"; 
-    printf "RCPT TO:<%s>\r\n"   "$TO";   
-    printf "DATA\r\n";                   
+    printf "MAIL FROM:<%s>\r\n" "$FROM"; sleep 1
+    printf "RCPT TO:<%s>\r\n"   "$TO";   sleep 1
+    printf "DATA\r\n";                   sleep 1
 
     # Message headers + blank line + body + DATA terminator
     printf "From: %s\r\n"        "$FROM"
@@ -38,9 +38,9 @@ echo "Testing SMTP connection to $HOST:$PORT..."
     printf "Subject: Automated Test Email\r\n"
     printf "\r\n"
     printf "This is a test email sent from the go-smtp relay.\r\n"
-    printf ".\r\n";
+    printf ".\r\n";                      sleep 2
 
-    printf "QUIT\r\n";                   
+    printf "QUIT\r\n";                   sleep 2
 } | nc -w 10 "$HOST" "$PORT"
 
 echo ""

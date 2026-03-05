@@ -11,6 +11,7 @@ services:
         - linux/arm64
     ports:
       - "8025:8025"
+      - "9090:9090"    # Health probes + Prometheus metrics
     volumes:
       - ./certs:/usr/src/smtp-relay/certs
     environment:
@@ -56,6 +57,20 @@ services:
       #- WHITELIST_CLIENT_ID=<client-uuid>
       #- WHITELIST_CLIENT_SECRET=<secret>
       #- WHITELIST_FROM_EMAIL=relay@example.com   # Override From address for whitelisted sessions
+
+      # ---------------------------------------------------------------------------
+      # SMTP session timeouts  (v1.3)
+      # ---------------------------------------------------------------------------
+      #- SMTP_READ_TIMEOUT=60        # Seconds before an idle SMTP read is timed out  (default: 60)
+      #- SMTP_WRITE_TIMEOUT=60       # Seconds before an idle SMTP write is timed out  (default: 60)
+
+      # ---------------------------------------------------------------------------
+      # Health, readiness & metrics  (v1.3)
+      # ---------------------------------------------------------------------------
+      #- HEALTH_PORT=9090            # TCP port for /healthz, /readyz, /metrics  (default: 9090)
+
+      # Send SIGHUP to the container to hot-reload configuration without a restart:
+      #   docker kill --signal=SIGHUP go-smtp-relay
 
       # ---------------------------------------------------------------------------
       # Reliability & performance tuning

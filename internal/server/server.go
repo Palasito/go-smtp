@@ -14,6 +14,7 @@ import (
 	"github.com/Palasito/go-smtp/internal/auth"
 	"github.com/Palasito/go-smtp/internal/config"
 	"github.com/Palasito/go-smtp/internal/graph"
+	"github.com/Palasito/go-smtp/internal/metrics"
 	"github.com/Palasito/go-smtp/internal/webhook"
 	"github.com/Palasito/go-smtp/internal/whitelist"
 	"github.com/emersion/go-sasl"
@@ -39,6 +40,7 @@ func (b *Backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 		slog.Info("Whitelisted IP connected, AUTH will be skipped", "ip", ip)
 	}
 
+	metrics.ActiveConnections.Inc()
 	return &Session{
 		backend:     b,
 		whitelisted: whitelisted,
@@ -75,6 +77,7 @@ func (s *Session) Auth(mech string) (sasl.Server, error) {
 		)
 		if err != nil {
 			slog.Warn("Authentication failed", "error", err)
+			metrics.AuthTotal.WithLabelValues("failure").Inc()
 			return &smtp.SMTPError{
 				Code:         535,
 				EnhancedCode: smtp.EnhancedCode{5, 7, 8},
@@ -83,6 +86,7 @@ func (s *Session) Auth(mech string) (sasl.Server, error) {
 		}
 		s.accessToken = result.AccessToken
 		s.fromEmail = result.FromEmail
+		metrics.AuthTotal.WithLabelValues("success").Inc()
 		slog.Info("SMTP session authenticated", "fromEmail", s.fromEmail)
 		return nil
 	}
@@ -198,6 +202,7 @@ func (s *Session) Data(r io.Reader) error {
 	}
 	if int64(len(raw)) > maxSize {
 		slog.Warn("Message rejected: exceeds size limit", "size", len(raw), "limit", maxSize)
+		metrics.MessagesTotal.WithLabelValues("rejected").Inc()
 		return &smtp.SMTPError{
 			Code:         552,
 			EnhancedCode: smtp.EnhancedCode{5, 3, 4},
@@ -250,12 +255,14 @@ func (s *Session) Data(r io.Reader) error {
 		// get a 4xx temporary response so the SMTP client queues and retries automatically.
 		var permErr *graph.PermanentError
 		if errors.As(err, &permErr) {
+			metrics.MessagesTotal.WithLabelValues("permanent_failure").Inc()
 			return &smtp.SMTPError{
 				Code:         554,
 				EnhancedCode: smtp.EnhancedCode{5, 0, 0},
 				Message:      "Transaction failed",
 			}
 		}
+		metrics.MessagesTotal.WithLabelValues("temporary_failure").Inc()
 		return &smtp.SMTPError{
 			Code:         451,
 			EnhancedCode: smtp.EnhancedCode{4, 4, 1},
@@ -263,6 +270,8 @@ func (s *Session) Data(r io.Reader) error {
 		}
 	}
 
+	metrics.MessagesTotal.WithLabelValues("sent").Inc()
+	metrics.MessageSize.Observe(float64(len(patched)))
 	slog.Info("Message delivered successfully", "sender", sender, "recipients", s.to)
 	return nil
 }
@@ -275,6 +284,7 @@ func (s *Session) Reset() {
 
 // Logout is called when the client disconnects.
 func (s *Session) Logout() error {
+	metrics.ActiveConnections.Dec()
 	return nil
 }
 

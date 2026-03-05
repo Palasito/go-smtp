@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Palasito/go-smtp/internal/httpclient"
+	"github.com/Palasito/go-smtp/internal/metrics"
 )
 
 const sendMailEndpoint = "https://graph.microsoft.com/v1.0/users/%s/sendMail"
@@ -107,12 +108,16 @@ func SendMail(accessToken string, mimeBody []byte, fromEmail string, retryAttemp
 
 	var lastErr error
 	var permanent bool
+	var totalAttempts int
 	for attempt := 0; attempt < retryAttempts; attempt++ {
+		totalAttempts = attempt + 1
 		slog.Debug("Sending email via Microsoft Graph API", "from", fromEmail, "attempt", attempt+1)
 
+		tAttempt := time.Now()
 		resp, err := doAttempt(ctx, accessToken, mimeBody, url)
 		if err != nil {
 			// Transport-level error — always retryable.
+			metrics.GraphAPILatency.WithLabelValues("transport_error").Observe(time.Since(tAttempt).Seconds())
 			lastErr = fmt.Errorf("Graph API request failed: %w", err)
 			slog.Warn("Graph API transport error", "attempt", attempt+1, "error", err)
 			if attempt+1 < retryAttempts {
@@ -124,7 +129,9 @@ func SendMail(accessToken string, mimeBody []byte, fromEmail string, retryAttemp
 		}
 
 		if resp.StatusCode == http.StatusAccepted { // 202 — success
+			metrics.GraphAPILatency.WithLabelValues("success").Observe(time.Since(tAttempt).Seconds())
 			resp.Body.Close()
+			metrics.GraphAPIAttempts.Observe(float64(totalAttempts))
 			slog.Info("Email sent successfully via Graph API", "from", fromEmail)
 			return nil
 		}
@@ -139,12 +146,14 @@ func SendMail(accessToken string, mimeBody []byte, fromEmail string, retryAttemp
 		lastErr = fmt.Errorf("Graph API sendMail failed: status=%d body=%s", resp.StatusCode, excerpt)
 
 		if !isRetryable(resp.StatusCode) {
+			metrics.GraphAPILatency.WithLabelValues("permanent_error").Observe(time.Since(tAttempt).Seconds())
 			slog.Error("Graph API sendMail non-retryable failure",
 				"status", resp.StatusCode, "from", fromEmail, "body", excerpt)
 			permanent = true
 			break
 		}
 
+		metrics.GraphAPILatency.WithLabelValues("retryable_error").Observe(time.Since(tAttempt).Seconds())
 		slog.Warn("Graph API transient failure",
 			"status", resp.StatusCode, "from", fromEmail,
 			"attempt", attempt+1, "maxAttempts", retryAttempts)
@@ -155,6 +164,7 @@ func SendMail(accessToken string, mimeBody []byte, fromEmail string, retryAttemp
 		}
 	}
 
+	metrics.GraphAPIAttempts.Observe(float64(totalAttempts))
 	if permanent {
 		slog.Error("Graph API sendMail permanently failed", "from", fromEmail, "error", lastErr)
 		return &PermanentError{err: lastErr}
