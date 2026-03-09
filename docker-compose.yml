@@ -42,6 +42,7 @@ services:
       - SERVER_GREETING=SMTP GO Graph Relay   # EHLO banner  (default: Microsoft Graph SMTP OAuth Relay)
       - USERNAME_DELIMITER=@                  # @ or : or |  (default: @)
       #- SMTP_PORT=8025               # TCP listen port  (default: 8025)
+      #- ALLOWED_FROM_DOMAINS=         # Comma-separated allowed sender domains; empty = allow all  (v1.4)
 
       # ---------------------------------------------------------------------------
       # Azure Tables  (user credential lookup)
