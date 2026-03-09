@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
@@ -123,7 +124,8 @@ func LookupUser(tablesURL, partitionKey, lookupID string) (tenantID, clientID, f
 		Filter: &filter,
 	})
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {

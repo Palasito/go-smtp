@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -20,8 +21,9 @@ type Config struct {
 	TLSCipherSuite  string // TLS_CIPHER_SUITE — optional, empty = system defaults
 
 	// SMTP
-	ServerGreeting    string // SERVER_GREETING — default "Microsoft Graph SMTP OAuth Relay"
-	UsernameDelimiter string // USERNAME_DELIMITER — default "@", valid: "@", ":", "|"
+	ServerGreeting    string   // SERVER_GREETING — default "Microsoft Graph SMTP OAuth Relay"
+	UsernameDelimiter string   // USERNAME_DELIMITER — default "@", valid: "@", ":", "|"
+	AllowedFromDomains []string // ALLOWED_FROM_DOMAINS — optional, comma-separated list of allowed sender domains
 
 	// Azure Key Vault
 	AzureKeyVaultURL      string // AZURE_KEY_VAULT_URL — optional
@@ -118,6 +120,13 @@ func Load() (*Config, error) {
 		)
 	}
 
+	// Auto-correct contradictory TLS settings: requiring TLS with source=off is
+	// impossible, so silently promote to "auto" with a warning.
+	if cfg.RequireTLS && cfg.TLSSource == "off" {
+		slog.Warn("REQUIRE_TLS=true but TLS_SOURCE=off: overriding TLS_SOURCE to \"auto\"")
+		cfg.TLSSource = "auto"
+	}
+
 	// --- TLS cert/key paths ---
 	cfg.TLSCertFilepath = getEnvOrDefault("TLS_CERT_FILEPATH", "certs/cert.pem")
 	cfg.TLSKeyFilepath = getEnvOrDefault("TLS_KEY_FILEPATH", "certs/key.pem")
@@ -135,6 +144,16 @@ func Load() (*Config, error) {
 		)
 	}
 	cfg.UsernameDelimiter = delimiter
+
+	// --- ALLOWED_FROM_DOMAINS ---
+	if rawDomains := os.Getenv("ALLOWED_FROM_DOMAINS"); rawDomains != "" {
+		for _, d := range strings.Split(rawDomains, ",") {
+			d = strings.TrimSpace(strings.ToLower(d))
+			if d != "" {
+				cfg.AllowedFromDomains = append(cfg.AllowedFromDomains, d)
+			}
+		}
+	}
 
 	// --- Azure Key Vault ---
 	cfg.AzureKeyVaultURL = os.Getenv("AZURE_KEY_VAULT_URL")

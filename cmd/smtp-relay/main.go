@@ -88,6 +88,10 @@ func main() {
 		slog.Info("TLS certificate auto-reload enabled", "intervalSeconds", cfg.TLSReloadInterval)
 	}
 
+	// --- Token cache GC ---
+	auth.StartCacheGC(reloadCtx, 5*time.Minute)
+	slog.Info("Token cache GC started", "interval", "5m")
+
 	// --- Whitelist ---
 	wl, err := whitelist.NewWhitelistConfig(
 		cfg.WhitelistIPs,
@@ -204,6 +208,25 @@ loop:
 			if newCfg.SMTPWriteTimeout != cfg.SMTPWriteTimeout {
 				s.WriteTimeout = time.Duration(newCfg.SMTPWriteTimeout) * time.Second
 				slog.Info("SMTP WriteTimeout updated", "writeTimeoutSeconds", newCfg.SMTPWriteTimeout)
+			}
+
+			// Reload whitelist.
+			newWl, wlErr := whitelist.NewWhitelistConfig(
+				newCfg.WhitelistIPs,
+				newCfg.WhitelistTenantID,
+				newCfg.WhitelistClientID,
+				newCfg.WhitelistClientSecret,
+				newCfg.WhitelistFromEmail,
+			)
+			if wlErr != nil {
+				slog.Warn("SIGHUP: whitelist reload failed, keeping current whitelist", "error", wlErr)
+			} else {
+				backend.Whitelist = newWl
+				if newWl != nil {
+					slog.Info("Whitelist reloaded", "networks", len(newWl.Networks))
+				} else {
+					slog.Info("Whitelist cleared (no WHITELIST_IPS configured)")
+				}
 			}
 
 			// Hot-swap backend config — picked up by all subsequent sessions.

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"math/rand"
 	"net/http"
 	"strconv"
 	"time"
@@ -58,6 +59,9 @@ func backoffDelay(resp *http.Response, attempt int, base time.Duration) time.Dur
 		}
 	}
 	d := time.Duration(float64(base) * math.Pow(2, float64(attempt)))
+	// Add ±20% jitter to avoid thundering-herd retry storms.
+	jitter := 0.8 + rand.Float64()*0.4 // [0.8, 1.2)
+	d = time.Duration(float64(d) * jitter)
 	if d > maxDelay {
 		return maxDelay
 	}
@@ -102,9 +106,8 @@ func doAttempt(ctx context.Context, accessToken string, mimeBody []byte, url str
 // retried up to retryAttempts total attempts using exponential back-off
 // starting at retryBaseDelay.  A Retry-After response header overrides the
 // computed delay for 429 responses.
-func SendMail(accessToken string, mimeBody []byte, fromEmail string, retryAttempts int, retryBaseDelay time.Duration) error {
+func SendMail(accessToken string, mimeBody []byte, fromEmail string, retryAttempts int, retryBaseDelay time.Duration, httpTimeout time.Duration) error {
 	url := fmt.Sprintf(sendMailEndpoint, fromEmail)
-	ctx := context.Background()
 
 	var lastErr error
 	var permanent bool
@@ -113,9 +116,11 @@ func SendMail(accessToken string, mimeBody []byte, fromEmail string, retryAttemp
 		totalAttempts = attempt + 1
 		slog.Debug("Sending email via Microsoft Graph API", "from", fromEmail, "attempt", attempt+1)
 
+		attemptCtx, attemptCancel := context.WithTimeout(context.Background(), httpTimeout)
 		tAttempt := time.Now()
-		resp, err := doAttempt(ctx, accessToken, mimeBody, url)
+		resp, err := doAttempt(attemptCtx, accessToken, mimeBody, url)
 		if err != nil {
+			attemptCancel()
 			// Transport-level error — always retryable.
 			metrics.GraphAPILatency.WithLabelValues("transport_error").Observe(time.Since(tAttempt).Seconds())
 			lastErr = fmt.Errorf("Graph API request failed: %w", err)
@@ -131,6 +136,7 @@ func SendMail(accessToken string, mimeBody []byte, fromEmail string, retryAttemp
 		if resp.StatusCode == http.StatusAccepted { // 202 — success
 			metrics.GraphAPILatency.WithLabelValues("success").Observe(time.Since(tAttempt).Seconds())
 			resp.Body.Close()
+			attemptCancel()
 			metrics.GraphAPIAttempts.Observe(float64(totalAttempts))
 			slog.Info("Email sent successfully via Graph API", "from", fromEmail)
 			return nil
@@ -146,6 +152,7 @@ func SendMail(accessToken string, mimeBody []byte, fromEmail string, retryAttemp
 		lastErr = fmt.Errorf("Graph API sendMail failed: status=%d body=%s", resp.StatusCode, excerpt)
 
 		if !isRetryable(resp.StatusCode) {
+			attemptCancel()
 			metrics.GraphAPILatency.WithLabelValues("permanent_error").Observe(time.Since(tAttempt).Seconds())
 			slog.Error("Graph API sendMail non-retryable failure",
 				"status", resp.StatusCode, "from", fromEmail, "body", excerpt)
@@ -157,6 +164,7 @@ func SendMail(accessToken string, mimeBody []byte, fromEmail string, retryAttemp
 		slog.Warn("Graph API transient failure",
 			"status", resp.StatusCode, "from", fromEmail,
 			"attempt", attempt+1, "maxAttempts", retryAttempts)
+		attemptCancel()
 		if attempt+1 < retryAttempts {
 			delay := backoffDelay(resp, attempt, retryBaseDelay)
 			slog.Info("Backing off before retry", "delay", delay)

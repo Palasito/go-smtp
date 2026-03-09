@@ -1,8 +1,10 @@
 package auth
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -78,4 +80,33 @@ func SetToken(key, accessToken string, expiresIn, marginSeconds int) {
 		expiresAt:   time.Now().Add(time.Duration(effective) * time.Second),
 	}
 	tokenCacheMu.Unlock()
+}
+
+// StartCacheGC runs a background goroutine that periodically removes expired
+// entries from the token cache. It stops when ctx is cancelled.
+func StartCacheGC(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				now := time.Now()
+				evicted := 0
+				tokenCacheMu.Lock()
+				for k, e := range tokenCacheStore {
+					if now.After(e.expiresAt) {
+						delete(tokenCacheStore, k)
+						evicted++
+					}
+				}
+				tokenCacheMu.Unlock()
+				if evicted > 0 {
+					slog.Debug("Token cache GC completed", "evicted", evicted)
+				}
+			}
+		}
+	}()
 }

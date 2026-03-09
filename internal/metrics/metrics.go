@@ -17,6 +17,13 @@ var (
 		Help: "Number of currently active SMTP connections.",
 	})
 
+	// SessionDuration tracks the total lifetime of SMTP sessions in seconds.
+	SessionDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "smtp_session_duration_seconds",
+		Help:    "Lifetime of SMTP sessions from connect to disconnect.",
+		Buckets: []float64{0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300},
+	})
+
 	// ---------------------------------------------------------------------------
 	// Authentication
 	// ---------------------------------------------------------------------------
@@ -108,6 +115,7 @@ var (
 func init() {
 	prometheus.MustRegister(
 		ActiveConnections,
+		SessionDuration,
 		AuthTotal,
 		MessagesTotal,
 		MessageSize,

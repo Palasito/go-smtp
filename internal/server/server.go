@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/mail"
+	"net/textproto"
 	"strings"
 	"time"
 
@@ -44,6 +45,7 @@ func (b *Backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 	return &Session{
 		backend:     b,
 		whitelisted: whitelisted,
+		connectedAt: time.Now(),
 	}, nil
 }
 
@@ -55,6 +57,7 @@ type Session struct {
 	from        string // SMTP envelope MAIL FROM address
 	to          []string
 	whitelisted bool
+	connectedAt time.Time
 }
 
 // AuthMechanisms returns the list of supported SASL authentication mechanisms.
@@ -165,6 +168,39 @@ func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
 			Message:      "Authentication required",
 		}
 	}
+
+	// Enforce sender domain allowlist if configured.
+	if domains := s.backend.Config.AllowedFromDomains; len(domains) > 0 {
+		fromLower := strings.ToLower(from)
+		atIdx := strings.LastIndex(fromLower, "@")
+		if atIdx < 0 {
+			slog.Warn("MAIL FROM rejected: no domain in address", "from", from)
+			return &smtp.SMTPError{
+				Code:         553,
+				EnhancedCode: smtp.EnhancedCode{5, 7, 1},
+				Message:      "Sender address rejected: invalid address format",
+			}
+		}
+		domain := fromLower[atIdx+1:]
+		// Strip surrounding angle brackets if present (e.g. "example.com>")
+		domain = strings.TrimRight(domain, ">")
+		allowed := false
+		for _, d := range domains {
+			if d == domain {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			slog.Warn("MAIL FROM rejected: domain not in allowlist", "from", from, "domain", domain)
+			return &smtp.SMTPError{
+				Code:         553,
+				EnhancedCode: smtp.EnhancedCode{5, 7, 1},
+				Message:      "Sender address rejected: domain not allowed",
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -210,8 +246,6 @@ func (s *Session) Data(r io.Reader) error {
 		}
 	}
 
-	slog.Info("Handling message", "from", s.from, "to", s.to)
-
 	// Patch MIME headers: inject missing To:, replace From: if fromEmail is set.
 	patched, err := patchHeaders(raw, s.to, s.fromEmail)
 	if err != nil {
@@ -222,6 +256,18 @@ func (s *Session) Data(r io.Reader) error {
 			Message:      "Transaction failed",
 		}
 	}
+
+	// Extract Message-ID and Subject for logging/correlation.
+	var msgID, subject string
+	if parsed, parseErr := mail.ReadMessage(bytes.NewReader(patched)); parseErr == nil {
+		msgID = parsed.Header.Get("Message-Id")
+		subject = parsed.Header.Get("Subject")
+		if len(subject) > 78 {
+			subject = subject[:78]
+		}
+	}
+
+	slog.Info("Handling message", "from", s.from, "to", s.to, "messageId", msgID, "subject", subject)
 
 	// Optionally strip privacy-sensitive headers before forwarding.
 	if s.backend.Config.SanitizeHeaders {
@@ -238,8 +284,9 @@ func (s *Session) Data(r io.Reader) error {
 		s.accessToken, patched, sender,
 		s.backend.Config.RetryAttempts,
 		time.Duration(s.backend.Config.RetryBaseDelay)*time.Second,
+		time.Duration(s.backend.Config.HTTPTimeout)*time.Second,
 	); err != nil {
-		slog.Error("Graph API send failed", "error", err)
+		slog.Error("Graph API send failed", "error", err, "messageId", msgID)
 		if s.backend.Config.FailureWebhookURL != "" {
 			go webhook.NotifyFailure(s.backend.Config.FailureWebhookURL, webhook.FailurePayload{
 				From:      sender,
@@ -272,7 +319,7 @@ func (s *Session) Data(r io.Reader) error {
 
 	metrics.MessagesTotal.WithLabelValues("sent").Inc()
 	metrics.MessageSize.Observe(float64(len(patched)))
-	slog.Info("Message delivered successfully", "sender", sender, "recipients", s.to)
+	slog.Info("Message delivered successfully", "sender", sender, "recipients", s.to, "messageId", msgID)
 	return nil
 }
 
@@ -284,8 +331,37 @@ func (s *Session) Reset() {
 
 // Logout is called when the client disconnects.
 func (s *Session) Logout() error {
+	metrics.SessionDuration.Observe(time.Since(s.connectedAt).Seconds())
 	metrics.ActiveConnections.Dec()
 	return nil
+}
+
+// headerOrder scans the raw normalized header block (up to the first blank
+// \r\n\r\n line) and returns canonicalized header names in their original
+// order, deduplicated. Continuation lines (starting with space/tab) are
+// attributed to the preceding header and do not produce a new entry.
+func headerOrder(norm []byte) []string {
+	var order []string
+	seen := make(map[string]bool)
+	lines := bytes.Split(norm, []byte("\r\n"))
+	for _, line := range lines {
+		if len(line) == 0 {
+			break // blank line = end of headers
+		}
+		if line[0] == ' ' || line[0] == '\t' {
+			continue // continuation line
+		}
+		idx := bytes.IndexByte(line, ':')
+		if idx < 0 {
+			continue
+		}
+		name := textproto.CanonicalMIMEHeaderKey(string(line[:idx]))
+		if !seen[name] {
+			seen[name] = true
+			order = append(order, name)
+		}
+	}
+	return order
 }
 
 // sanitizeHeaders removes headers that could reveal the originating client's
@@ -335,8 +411,14 @@ func sanitizeHeaders(input []byte) []byte {
 		return input
 	}
 
+	order := headerOrder(norm)
+
 	var buf bytes.Buffer
-	for key, vals := range msg.Header {
+	for _, key := range order {
+		vals, ok := msg.Header[key]
+		if !ok {
+			continue // was deleted (privacy header)
+		}
 		for _, v := range vals {
 			fmt.Fprintf(&buf, "%s: %s\r\n", key, v)
 		}
@@ -402,8 +484,25 @@ func patchHeaders(input []byte, rcptTos []string, fromEmail string) ([]byte, err
 		return nil, fmt.Errorf("reading message body: %w", err)
 	}
 
+	order := headerOrder(norm)
+
 	var buf bytes.Buffer
+	written := make(map[string]bool)
+	for _, key := range order {
+		vals, ok := msg.Header[key]
+		if !ok {
+			continue
+		}
+		for _, v := range vals {
+			fmt.Fprintf(&buf, "%s: %s\r\n", key, v)
+		}
+		written[key] = true
+	}
+	// Write any headers that were injected and not in the original order.
 	for key, vals := range msg.Header {
+		if written[key] {
+			continue
+		}
 		for _, v := range vals {
 			fmt.Fprintf(&buf, "%s: %s\r\n", key, v)
 		}
