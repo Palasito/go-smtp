@@ -21,8 +21,8 @@ type Config struct {
 	TLSCipherSuite  string // TLS_CIPHER_SUITE — optional, empty = system defaults
 
 	// SMTP
-	ServerGreeting    string   // SERVER_GREETING — default "Microsoft Graph SMTP OAuth Relay"
-	UsernameDelimiter string   // USERNAME_DELIMITER — default "@", valid: "@", ":", "|"
+	ServerGreeting     string   // SERVER_GREETING — default "Microsoft Graph SMTP OAuth Relay"
+	UsernameDelimiter  string   // USERNAME_DELIMITER — default "@", valid: "@", ":", "|"
 	AllowedFromDomains []string // ALLOWED_FROM_DOMAINS — optional, comma-separated list of allowed sender domains
 
 	// Azure Key Vault
