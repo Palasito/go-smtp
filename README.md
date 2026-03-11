@@ -19,6 +19,7 @@ It accepts SMTP connections, authenticates clients via **OAuth 2.0 client creden
 - **Session duration metric** — new `smtp_session_duration_seconds` Prometheus histogram tracks the lifetime of each SMTP session from connect to disconnect.
 - **Sender domain allowlist** — new `ALLOWED_FROM_DOMAINS` env var restricts which sender domains can relay through the server; unlisted domains receive `553 5.7.1`.
 - **SIGHUP-reloadable whitelist** — the IP whitelist is now rebuilt on `SIGHUP`, allowing operators to update `WHITELIST_IPS` and credentials without restarting.
+- **Max recipients limit** — new `MAX_RECIPIENTS` env var caps the number of `RCPT TO` addresses per message; the SMTP server rejects additional recipients with `452 4.5.3`.
 
 ## What's new in v1.3
 
@@ -148,6 +149,7 @@ All configuration is via environment variables. The Go version uses **exactly th
 | `WHITELIST_FROM_EMAIL` | _(optional)_ | Override From address for whitelisted sessions |
 | `SMTP_PORT` | `8025` | TCP port the relay listens on |
 | `MAX_MESSAGE_SIZE` | `36700160` | Maximum accepted message size in bytes (default 35 MB) |
+| `MAX_RECIPIENTS` | `0` | Maximum number of `RCPT TO` addresses per message (0 = unlimited) |
 | `HTTP_TIMEOUT` | `30` | HTTP request timeout in seconds for Graph API / OAuth calls |
 | `RETRY_ATTEMPTS` | `3` | Total Graph API send attempts (1 = no retry) |
 | `RETRY_BASE_DELAY` | `1` | Base delay in seconds for exponential retry back-off |
