@@ -24,6 +24,7 @@ type Config struct {
 	ServerGreeting     string   // SERVER_GREETING — default "Microsoft Graph SMTP OAuth Relay"
 	UsernameDelimiter  string   // USERNAME_DELIMITER — default "@", valid: "@", ":", "|"
 	AllowedFromDomains []string // ALLOWED_FROM_DOMAINS — optional, comma-separated list of allowed sender domains
+	MaxRecipients      int      // MAX_RECIPIENTS — default 0 (unlimited), maximum RCPT TO addresses per message
 
 	// Azure Key Vault
 	AzureKeyVaultURL      string // AZURE_KEY_VAULT_URL — optional
@@ -154,6 +155,17 @@ func Load() (*Config, error) {
 			}
 		}
 	}
+
+	// --- MAX_RECIPIENTS ---
+	maxRecipientsStr := getEnvOrDefault("MAX_RECIPIENTS", "0")
+	maxRecipients, err := strconv.Atoi(maxRecipientsStr)
+	if err != nil || maxRecipients < 0 {
+		return nil, fmt.Errorf(
+			"invalid MAX_RECIPIENTS %q: must be a non-negative integer (0 = unlimited)",
+			maxRecipientsStr,
+		)
+	}
+	cfg.MaxRecipients = maxRecipients
 
 	// --- Azure Key Vault ---
 	cfg.AzureKeyVaultURL = os.Getenv("AZURE_KEY_VAULT_URL")

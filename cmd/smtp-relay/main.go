@@ -118,6 +118,7 @@ func main() {
 	s.Addr = ":" + cfg.SMTPPort
 	s.Domain = cfg.ServerGreeting
 	s.MaxMessageBytes = cfg.MaxMessageSize
+	s.MaxRecipients = cfg.MaxRecipients
 	s.TLSConfig = tlsCfg
 	s.AllowInsecureAuth = !cfg.RequireTLS
 	s.ReadTimeout = time.Duration(cfg.SMTPReadTimeout) * time.Second
