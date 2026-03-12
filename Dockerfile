@@ -1,5 +1,5 @@
 # ---- Build Stage ----
-FROM --platform=$BUILDPLATFORM golang:tip-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 
 # Install CA certificates (needed in final image for HTTPS calls to Microsoft APIs)
 RUN apk add --no-cache ca-certificates
