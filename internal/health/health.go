@@ -113,8 +113,7 @@ const indexHTML = `<!DOCTYPE html>
       <span class="card-title">Version</span>
       <span class="badge info" id="badge-version"><span class="dot"></span>loading&#8230;</span>
     </div>
-    <p class="card-desc">Build metadata: version tag, commit hash, and build date.</p>
-    <span id="version-detail" class="card-error" style="color:var(--muted);font-family:'SF Mono','Fira Code',monospace;font-size:.8rem"></span>
+    <p class="card-desc" id="version-details">Fetching build metadata&#8230;</p>
     <a class="card-link" href="/version" target="_blank">/version</a>
   </div>
 </div>
@@ -137,19 +136,24 @@ const indexHTML = `<!DOCTYPE html>
       var body = await r2.json().catch(function(){ return {}; });
       setBadge('badge-readyz', r2.ok, body.error);
     } catch(e) { setBadge('badge-readyz', false, e.message); }
-    try {
-      var r3 = await fetch('/version');
-      var v = await r3.json().catch(function(){ return {}; });
-      var el = document.getElementById('badge-version');
-      el.className = 'badge ok'; el.innerHTML = '<span class="dot"></span>' + (v.version || 'unknown');
-      document.getElementById('version-detail').textContent = (v.commit || '?') + ' · ' + (v.buildDate || '?');
-    } catch(e) {
-      var el2 = document.getElementById('badge-version');
-      el2.className = 'badge error'; el2.innerHTML = '<span class="dot"></span>error';
-    }
     document.getElementById('last-update').textContent = 'updated ' + new Date().toLocaleTimeString();
   }
-  poll(); setInterval(poll, 5000);
+  async function loadVersion() {
+    try {
+      var r = await fetch('/version');
+      var v = await r.json();
+      var el = document.getElementById('badge-version');
+      el.className = 'badge ok';
+      el.innerHTML = '<span class="dot"></span>' + (v.version || 'dev');
+      document.getElementById('version-details').textContent =
+        'Commit: ' + (v.commit || '?') + '  ·  Built: ' + (v.buildDate || '?');
+    } catch(e) {
+      var el = document.getElementById('badge-version');
+      el.className = 'badge error';
+      el.innerHTML = '<span class="dot"></span>error';
+    }
+  }
+  poll(); setInterval(poll, 5000); loadVersion();
 </script>
 </body>
 </html>`
