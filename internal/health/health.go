@@ -108,6 +108,14 @@ const indexHTML = `<!DOCTYPE html>
     <p class="card-desc">Live Prometheus metrics dashboard: connections, auth, messages, Graph API, OAuth, webhooks.</p>
     <a class="card-link" href="/metrics">&#8594; Open dashboard</a>
   </div>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Version</span>
+      <span class="badge info" id="badge-version"><span class="dot"></span>loading&#8230;</span>
+    </div>
+    <p class="card-desc" id="version-details">Fetching build metadata&#8230;</p>
+    <a class="card-link" href="/version" target="_blank">/version</a>
+  </div>
 </div>
 <footer>
   <span>Refreshes every 5 s</span>
@@ -130,7 +138,22 @@ const indexHTML = `<!DOCTYPE html>
     } catch(e) { setBadge('badge-readyz', false, e.message); }
     document.getElementById('last-update').textContent = 'updated ' + new Date().toLocaleTimeString();
   }
-  poll(); setInterval(poll, 5000);
+  async function loadVersion() {
+    try {
+      var r = await fetch('/version');
+      var v = await r.json();
+      var el = document.getElementById('badge-version');
+      el.className = 'badge ok';
+      el.innerHTML = '<span class="dot"></span>' + (v.version || 'dev');
+      document.getElementById('version-details').textContent =
+        'Commit: ' + (v.commit || '?') + '  ·  Built: ' + (v.buildDate || '?');
+    } catch(e) {
+      var el = document.getElementById('badge-version');
+      el.className = 'badge error';
+      el.innerHTML = '<span class="dot"></span>error';
+    }
+  }
+  poll(); setInterval(poll, 5000); loadVersion();
 </script>
 </body>
 </html>`

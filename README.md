@@ -1,10 +1,40 @@
-# (Go) SMTP OAuth Relay — v1.4
+# (Go) SMTP OAuth Relay — v1.5
 
 [![Docker Image](https://github.com/Palasito/go-smtp/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Palasito/go-smtp/actions/workflows/docker-publish.yml)
 
 A high-performance, statically-linked Go port of the [Python SMTP-to-Microsoft-Graph relay](https://github.com/JustinIven/smtp-oauth-relay).
 
 It accepts SMTP connections, authenticates clients via **OAuth 2.0 client credentials**, and delivers messages through the **Microsoft Graph API** (`sendMail`). It is a **drop-in replacement** for the Python version — all environment variables, the SMTP port, and the observable behaviour are identical.
+
+## What's new in v1.5
+
+### Security & Correctness
+- **CacheKey hash collision fix** — token cache keys now use `\x00` null-byte field separators so distinct credential tuples can never produce the same SHA-256 hash.
+- **OData injection fix** — single quotes in Azure Table lookup values are now escaped (`'` → `''`), preventing filter injection.
+- **Backend config data race fix** — `Config` and `Whitelist` are stored in `atomic.Pointer`; each SMTP session snapshots them at creation so SIGHUP reloads never race with in-flight sessions.
+- **Token cache margin race fix** — `tokenCacheMarginSecs` replaced with `atomic.Int32` + accessor, eliminating a data race on SIGHUP reload.
+
+### Hardening
+- **Non-root Docker container** — the scratch image now runs as `USER 65534:65534`.
+- **Bounded webhook goroutines** — a semaphore (cap 16) limits concurrent webhook calls; excess notifications are dropped instead of spawning unbounded goroutines.
+- **Port collision validation** — startup rejects `SMTP_PORT == HEALTH_PORT` with a clear error.
+
+### Observability
+- **Per-session UUID correlation IDs** — every structured log line within a session includes `"session": "<uuid>"`.
+- **Build version injection** — `Version`, `Commit`, and `BuildDate` are set via `-ldflags` at build time and served at `GET /version`.
+- **Version dashboard card** — the status dashboard now shows the running version, commit, and build date.
+- **Startup metadata log** — version, Go runtime, PID, and key config values are logged at boot.
+- **New Prometheus metrics** — `smtp_connections_total`, `smtp_whitelist_auth_total` (by result), `smtp_recipients_per_message`, `smtp_token_cache_size`.
+
+### Cloud & Configuration
+- **Sovereign cloud support** — new `AZURE_AUTHORITY_HOST` and `GRAPH_ENDPOINT` env vars allow targeting Azure Government, Azure China, etc.
+- **Real readiness probe** — `/readyz` now TCP-dials the SMTP port instead of always returning 200.
+
+### Code Quality
+- **Shared retry package** — duplicated retry/backoff logic extracted into `internal/retry`.
+- **Removed empty handler package.**
+- **Fixed docker-compose volume** — `./certs:/certs` (was unreachable path in scratch image).
+- **Fixed broken README doc links.**
 
 ## What's new in v1.4
 
@@ -125,7 +155,7 @@ Use the existing [`docker-compose.yml`](docker-compose.yml) in the repo root.
 
 ## Configuration
 
-All configuration is via environment variables. The Go version uses **exactly the same variables** as the Python version — see [docs/configuration.md](../docs/configuration.md) for the full reference.
+All configuration is via environment variables. The Go version uses **exactly the same variables** as the Python version, plus several Go-specific additions.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -161,6 +191,8 @@ All configuration is via environment variables. The Go version uses **exactly th
 | `SMTP_READ_TIMEOUT` | `60` | Seconds before an idle SMTP read is timed out (per connection) |
 | `SMTP_WRITE_TIMEOUT` | `60` | Seconds before an idle SMTP write is timed out (per connection) |
 | `HEALTH_PORT` | `9090` | TCP port for the health/readiness/metrics HTTP server |
+| `AZURE_AUTHORITY_HOST` | `https://login.microsoftonline.com` | OAuth authority URL (for sovereign clouds: Azure Government, Azure China, etc.) |
+| `GRAPH_ENDPOINT` | `https://graph.microsoft.com` | Microsoft Graph base URL (for sovereign clouds) |
 
 ---
 
@@ -170,9 +202,10 @@ The relay exposes a secondary HTTP server (default `:9090`) alongside the SMTP l
 
 | Route | Method | Description |
 |---|---|---|
-| `/` | `GET` | Interactive status dashboard (HTML) — live liveness/readiness/metrics cards, auto-refreshes every 5 s |
+| `/` | `GET` | Interactive status dashboard (HTML) — live liveness/readiness/version/metrics cards, auto-refreshes every 5 s |
 | `/healthz` | `GET` | Liveness probe — always `200 OK` while the process is alive |
-| `/readyz` | `GET` | Readiness probe — `200 OK` / `503` |
+| `/readyz` | `GET` | Readiness probe — `200 OK` / `503` (TCP-dials the SMTP port) |
+| `/version` | `GET` | JSON build metadata: `{"version", "commit", "buildDate"}` |
 | `/metrics` | `GET` | Interactive Prometheus metrics dashboard (HTML) — grouped metric families, search, auto-refreshes every 15 s |
 | `/metrics?$output=text` | `GET` | Raw Prometheus text exposition format for scraper ingestion |
 
