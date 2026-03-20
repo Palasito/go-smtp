@@ -11,7 +11,11 @@ import (
 // Config holds all application configuration loaded from environment variables.
 type Config struct {
 	// Logging
-	LogLevel string // LOG_LEVEL — default "WARNING", valid: DEBUG/INFO/WARNING/ERROR/CRITICAL
+	LogLevel      string // LOG_LEVEL — default "WARNING", valid: DEBUG/INFO/WARNING/ERROR/CRITICAL
+	LogFile       string // LOG_FILE — optional, path to log file (logs are always written to stdout as well)
+	LogFormat     string // LOG_FORMAT — default "text", valid: text/json
+	LogRotateHours  int  // LOG_ROTATE_HOURS — default 1, hours between log file rotations (0 = no rotation)
+	LogRetentionDays int // LOG_RETENTION_DAYS — default 0, days to keep rotated log files (0 = keep forever)
 
 	// TLS
 	TLSSource       string // TLS_SOURCE — default "file", valid: off/auto/file/keyvault
@@ -65,6 +69,7 @@ var (
 	validLogLevels  = []string{"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 	validTLSSources = []string{"off", "auto", "file", "keyvault"}
 	validDelimiters = []string{"@", ":", "|"}
+	validLogFormats = []string{"text", "json"}
 )
 
 // getEnvOrDefault returns the value of the environment variable named by key,
@@ -100,6 +105,41 @@ func Load() (*Config, error) {
 		)
 	}
 	cfg.LogLevel = logLevel
+
+	// --- LOG_FILE ---
+	cfg.LogFile = os.Getenv("LOG_FILE") // optional, empty = stdout only
+
+	// --- LOG_FORMAT ---
+	logFormat := strings.ToLower(getEnvOrDefault("LOG_FORMAT", "text"))
+	if !contains(validLogFormats, logFormat) {
+		return nil, fmt.Errorf(
+			"invalid LOG_FORMAT %q: must be one of %s",
+			logFormat, strings.Join(validLogFormats, ", "),
+		)
+	}
+	cfg.LogFormat = logFormat
+
+	// --- LOG_ROTATE_HOURS ---
+	logRotateStr := getEnvOrDefault("LOG_ROTATE_HOURS", "1")
+	logRotate, err := strconv.Atoi(logRotateStr)
+	if err != nil || logRotate < 0 {
+		return nil, fmt.Errorf(
+			"invalid LOG_ROTATE_HOURS %q: must be a non-negative integer (0 = no rotation)",
+			logRotateStr,
+		)
+	}
+	cfg.LogRotateHours = logRotate
+
+	// --- LOG_RETENTION_DAYS ---
+	logRetentionStr := getEnvOrDefault("LOG_RETENTION_DAYS", "0")
+	logRetention, err := strconv.Atoi(logRetentionStr)
+	if err != nil || logRetention < 0 {
+		return nil, fmt.Errorf(
+			"invalid LOG_RETENTION_DAYS %q: must be a non-negative integer (0 = keep forever)",
+			logRetentionStr,
+		)
+	}
+	cfg.LogRetentionDays = logRetention
 
 	// --- TLS_SOURCE ---
 	tlsSource := strings.ToLower(getEnvOrDefault("TLS_SOURCE", "file"))

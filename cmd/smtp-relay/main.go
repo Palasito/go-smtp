@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/Palasito/go-smtp/internal/config"
 	"github.com/Palasito/go-smtp/internal/health"
 	"github.com/Palasito/go-smtp/internal/httpclient"
+	"github.com/Palasito/go-smtp/internal/logfile"
 	"github.com/Palasito/go-smtp/internal/server"
 	tlspkg "github.com/Palasito/go-smtp/internal/tls"
 	"github.com/Palasito/go-smtp/internal/version"
@@ -42,6 +44,37 @@ func logLevelFromString(level string) slog.Level {
 	}
 }
 
+// openLogFile opens (or creates) a rotating log writer based on the config.
+// If basePath is empty, it returns nil and os.Stdout.
+func openLogWriter(ctx context.Context, cfg *config.Config) (*logfile.RotatingWriter, io.Writer, error) {
+	if cfg.LogFile == "" {
+		return nil, os.Stdout, nil
+	}
+	rw, err := logfile.New(ctx, logfile.Options{
+		BasePath:      cfg.LogFile,
+		RotateEvery:   time.Duration(cfg.LogRotateHours) * time.Hour,
+		RetentionDays: cfg.LogRetentionDays,
+		BannerFunc: func(f *os.File) {
+			fmt.Fprintf(f, "=== smtp-relay %s (commit %s, built %s) pid=%d go=%s opened=%s ===\n",
+				version.Version, version.Commit, version.BuildDate,
+				os.Getpid(), runtime.Version(), time.Now().Format(time.RFC3339))
+		},
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return rw, io.MultiWriter(os.Stdout, rw), nil
+}
+
+// newSlogHandler builds the appropriate slog.Handler for the given format and writer.
+func newSlogHandler(format string, w io.Writer, lvl slog.Level) slog.Handler {
+	opts := &slog.HandlerOptions{Level: lvl}
+	if format == "json" {
+		return slog.NewJSONHandler(w, opts)
+	}
+	return slog.NewTextHandler(w, opts)
+}
+
 func main() {
 	// Load configuration from environment variables.
 	cfg, err := config.Load()
@@ -50,12 +83,23 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Configure structured logger with the requested log level.
+	// Configure structured logger with the requested log level and format.
 	lvl := logLevelFromString(cfg.LogLevel)
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: lvl,
-	}))
-	slog.SetDefault(logger)
+	logCtx, logCtxCancel := context.WithCancel(context.Background())
+	logRotator, logWriter, err := openLogWriter(logCtx, cfg)
+	if err != nil {
+		slog.Error("Failed to open log file", "path", cfg.LogFile, "error", err)
+		os.Exit(1)
+	}
+	slog.SetDefault(slog.New(newSlogHandler(cfg.LogFormat, logWriter, lvl)))
+	if cfg.LogFile != "" {
+		slog.Info("File logging enabled",
+			"path", cfg.LogFile,
+			"format", cfg.LogFormat,
+			"rotateHours", cfg.LogRotateHours,
+			"retentionDays", cfg.LogRetentionDays,
+		)
+	}
 
 	slog.Info("Configuration loaded successfully")
 
@@ -205,12 +249,39 @@ loop:
 					"current", cfg.TLSSource, "new", newCfg.TLSSource)
 			}
 
-			// Log level.
-			if newCfg.LogLevel != cfg.LogLevel {
-				lvl = logLevelFromString(newCfg.LogLevel)
-				slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout,
-					&slog.HandlerOptions{Level: lvl})))
-				slog.Info("Log level updated", "level", newCfg.LogLevel)
+			// Logging config change — rebuild logger (level, format, file, rotation, retention).
+			logChanged := newCfg.LogFile != cfg.LogFile ||
+				newCfg.LogFormat != cfg.LogFormat ||
+				newCfg.LogLevel != cfg.LogLevel ||
+				newCfg.LogRotateHours != cfg.LogRotateHours ||
+				newCfg.LogRetentionDays != cfg.LogRetentionDays
+			if logChanged {
+				newCtx, newCancel := context.WithCancel(context.Background())
+				newRotator, newWriter, logErr := openLogWriter(newCtx, newCfg)
+				if logErr != nil {
+					newCancel()
+					slog.Warn("SIGHUP: failed to open new log writer, keeping current logger",
+						"path", newCfg.LogFile, "error", logErr)
+				} else {
+					lvl = logLevelFromString(newCfg.LogLevel)
+					slog.SetDefault(slog.New(newSlogHandler(newCfg.LogFormat, newWriter, lvl)))
+					// Close old rotator after switching.
+					logCtxCancel()
+					if logRotator != nil {
+						logRotator.Close()
+					}
+					logRotator = newRotator
+					logWriter = newWriter
+					logCtx = newCtx
+					logCtxCancel = newCancel
+					slog.Info("Logging reconfigured",
+						"path", newCfg.LogFile,
+						"format", newCfg.LogFormat,
+						"level", newCfg.LogLevel,
+						"rotateHours", newCfg.LogRotateHours,
+						"retentionDays", newCfg.LogRetentionDays,
+					)
+				}
 			}
 
 			// OAuth token cache margin.
@@ -273,6 +344,10 @@ loop:
 	}
 	if err := s.Shutdown(shutdownCtx); err != nil {
 		slog.Error("Error during graceful shutdown", "error", err)
+	}
+	logCtxCancel()
+	if logRotator != nil {
+		logRotator.Close()
 	}
 	slog.Info("Server stopped")
 }
