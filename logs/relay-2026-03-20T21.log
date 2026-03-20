@@ -1,0 +1,11 @@
+=== smtp-relay 1.5 (commit local, built ) pid=1 go=go1.26.1 opened=2026-03-20T21:10:55Z ===
+{"time":"2026-03-20T21:10:55.024203419Z","level":"INFO","msg":"File logging enabled","path":"/logs/relay.log","format":"json","rotateHours":1,"retentionDays":0}
+{"time":"2026-03-20T21:10:55.024393606Z","level":"INFO","msg":"Configuration loaded successfully"}
+{"time":"2026-03-20T21:10:55.024704994Z","level":"INFO","msg":"Starting smtp-relay","version":"1.5","commit":"local","buildDate":"","go":"go1.26.1","pid":1,"smtpPort":"8025","healthPort":"9090","tlsSource":"off","maxRecipients":0,"azureAuthorityHost":"https://login.microsoftonline.com","graphEndpoint":"https://graph.microsoft.com"}
+{"time":"2026-03-20T21:10:55.025025644Z","level":"INFO","msg":"HTTP client initialised","timeout":30}
+{"time":"2026-03-20T21:10:55.025206999Z","level":"INFO","msg":"OAuth token cache initialised","marginSeconds":300}
+{"time":"2026-03-20T21:10:55.025387088Z","level":"INFO","msg":"TLS disabled"}
+{"time":"2026-03-20T21:10:55.025604904Z","level":"INFO","msg":"Token cache GC started","interval":"5m"}
+{"time":"2026-03-20T21:10:55.025902359Z","level":"INFO","msg":"SMTP server configured","readTimeout":60,"writeTimeout":60}
+{"time":"2026-03-20T21:10:55.026196984Z","level":"INFO","msg":"SMTP server starting","addr":":8025","requireTLS":false}
+{"time":"2026-03-20T21:10:55.02630129Z","level":"INFO","msg":"Health server starting","addr":":9090"}
