@@ -12,6 +12,7 @@ import (
 type Config struct {
 	// Logging
 	LogLevel string // LOG_LEVEL — default "WARNING", valid: DEBUG/INFO/WARNING/ERROR/CRITICAL
+	LogFile  string // LOG_FILE — optional, path to log file (logs are always written to stdout as well)
 
 	// TLS
 	TLSSource       string // TLS_SOURCE — default "file", valid: off/auto/file/keyvault
@@ -100,6 +101,9 @@ func Load() (*Config, error) {
 		)
 	}
 	cfg.LogLevel = logLevel
+
+	// --- LOG_FILE ---
+	cfg.LogFile = os.Getenv("LOG_FILE") // optional, empty = stdout only
 
 	// --- TLS_SOURCE ---
 	tlsSource := strings.ToLower(getEnvOrDefault("TLS_SOURCE", "file"))

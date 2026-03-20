@@ -149,6 +149,7 @@ All configuration is via environment variables. The Go version uses **exactly th
 | Variable | Default | Description |
 |---|---|---|
 | `LOG_LEVEL` | `WARNING` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
+| `LOG_FILE` | _(empty)_ | Path to a log file; logs are **always** written to stdout as well. Mount a volume (e.g. `./logs:/logs`) and set `LOG_FILE=/logs/relay.log` for persistent, host-accessible logs |
 
 ### TLS
 
@@ -242,7 +243,7 @@ docker kill --signal=SIGHUP go-smtp-relay
 kill -HUP $(pidof smtp-relay)
 ```
 
-**Reloadable at runtime** — `LOG_LEVEL`, `TOKEN_CACHE_MARGIN`, `HTTP_TIMEOUT`, `SMTP_READ_TIMEOUT`, `SMTP_WRITE_TIMEOUT`, all `WHITELIST_*` variables, `RETRY_ATTEMPTS`, `RETRY_BASE_DELAY`, `MAX_MESSAGE_SIZE`, `MAX_RECIPIENTS`, `SANITIZE_HEADERS`, `FAILURE_WEBHOOK_URL`, `ALLOWED_FROM_DOMAINS`, `SERVER_GREETING`, `USERNAME_DELIMITER`, `AZURE_AUTHORITY_HOST`, `GRAPH_ENDPOINT`, `SHUTDOWN_TIMEOUT`.
+**Reloadable at runtime** — `LOG_LEVEL`, `LOG_FILE`, `TOKEN_CACHE_MARGIN`, `HTTP_TIMEOUT`, `SMTP_READ_TIMEOUT`, `SMTP_WRITE_TIMEOUT`, all `WHITELIST_*` variables, `RETRY_ATTEMPTS`, `RETRY_BASE_DELAY`, `MAX_MESSAGE_SIZE`, `MAX_RECIPIENTS`, `SANITIZE_HEADERS`, `FAILURE_WEBHOOK_URL`, `ALLOWED_FROM_DOMAINS`, `SERVER_GREETING`, `USERNAME_DELIMITER`, `AZURE_AUTHORITY_HOST`, `GRAPH_ENDPOINT`, `SHUTDOWN_TIMEOUT`.
 
 **Require restart** — `SMTP_PORT`, `HEALTH_PORT`, `TLS_SOURCE`.
 

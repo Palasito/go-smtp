@@ -18,11 +18,13 @@ services:
       - "9090:9090"    # Health probes + Prometheus metrics
     volumes:
       - ./certs:/certs
+      - ./logs:/logs
     environment:
       # ---------------------------------------------------------------------------
       # Logging
       # ---------------------------------------------------------------------------
       - LOG_LEVEL=DEBUG               # DEBUG | INFO | WARNING | ERROR | CRITICAL  (default: WARNING)
+      #- LOG_FILE=/logs/relay.log      # Path to log file; logs always go to stdout as well  (default: stdout only)
 
       # ---------------------------------------------------------------------------
       # TLS

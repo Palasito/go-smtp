@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"time"
@@ -42,6 +44,23 @@ func logLevelFromString(level string) slog.Level {
 	}
 }
 
+// openLogFile opens (or creates) the log file for append and returns the file
+// handle and an io.Writer that tees to both stdout and the file.
+// If path is empty, it returns nil and os.Stdout.
+func openLogFile(path string) (*os.File, io.Writer, error) {
+	if path == "" {
+		return nil, os.Stdout, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, nil, fmt.Errorf("create log directory: %w", err)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open log file: %w", err)
+	}
+	return f, io.MultiWriter(os.Stdout, f), nil
+}
+
 func main() {
 	// Load configuration from environment variables.
 	cfg, err := config.Load()
@@ -52,10 +71,18 @@ func main() {
 
 	// Configure structured logger with the requested log level.
 	lvl := logLevelFromString(cfg.LogLevel)
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+	logFile, logWriter, err := openLogFile(cfg.LogFile)
+	if err != nil {
+		slog.Error("Failed to open log file", "path", cfg.LogFile, "error", err)
+		os.Exit(1)
+	}
+	logger := slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{
 		Level: lvl,
 	}))
 	slog.SetDefault(logger)
+	if cfg.LogFile != "" {
+		slog.Info("File logging enabled", "path", cfg.LogFile)
+	}
 
 	slog.Info("Configuration loaded successfully")
 
@@ -205,12 +232,28 @@ loop:
 					"current", cfg.TLSSource, "new", newCfg.TLSSource)
 			}
 
-			// Log level.
-			if newCfg.LogLevel != cfg.LogLevel {
-				lvl = logLevelFromString(newCfg.LogLevel)
-				slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout,
-					&slog.HandlerOptions{Level: lvl})))
-				slog.Info("Log level updated", "level", newCfg.LogLevel)
+			// Log file path change or log level change — rebuild logger.
+			if newCfg.LogFile != cfg.LogFile || newCfg.LogLevel != cfg.LogLevel {
+				newLogFile, newLogWriter, logErr := openLogFile(newCfg.LogFile)
+				if logErr != nil {
+					slog.Warn("SIGHUP: failed to open new log file, keeping current logger",
+						"path", newCfg.LogFile, "error", logErr)
+				} else {
+					lvl = logLevelFromString(newCfg.LogLevel)
+					slog.SetDefault(slog.New(slog.NewTextHandler(newLogWriter,
+						&slog.HandlerOptions{Level: lvl})))
+					// Close old file after switching.
+					if logFile != nil {
+						logFile.Close()
+					}
+					logFile = newLogFile
+					if newCfg.LogFile != cfg.LogFile {
+						slog.Info("Log file updated", "path", newCfg.LogFile)
+					}
+					if newCfg.LogLevel != cfg.LogLevel {
+						slog.Info("Log level updated", "level", newCfg.LogLevel)
+					}
+				}
 			}
 
 			// OAuth token cache margin.
@@ -273,6 +316,9 @@ loop:
 	}
 	if err := s.Shutdown(shutdownCtx); err != nil {
 		slog.Error("Error during graceful shutdown", "error", err)
+	}
+	if logFile != nil {
+		logFile.Close()
 	}
 	slog.Info("Server stopped")
 }
