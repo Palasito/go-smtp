@@ -24,10 +24,10 @@ services:
       # Logging
       # ---------------------------------------------------------------------------
       - LOG_LEVEL=DEBUG               # DEBUG | INFO | WARNING | ERROR | CRITICAL  (default: WARNING)
-      #- LOG_FILE=/logs/relay.log      # Path to log file; logs always go to stdout as well  (default: stdout only)
-      #- LOG_FORMAT=text               # text | json  (default: text)
-      #- LOG_ROTATE_HOURS=1            # Hours between log file rotations; 0 = no rotation  (default: 1)
-      #- LOG_RETENTION_DAYS=0          # Days to keep rotated log files; 0 = keep forever  (default: 0)
+      - LOG_FILE=/logs/relay.log      # Path to log file; empty = stdout only  (default: empty)
+      - LOG_FORMAT=json               # text | json  (default: text)
+      - LOG_ROTATE_HOURS=1            # 0 = single file, 1 = hourly, 24 = daily  (default: 1)
+      - LOG_RETENTION_DAYS=0          # 0 = keep forever, 7 = one week, 30 = one month  (default: 0)
 
       # ---------------------------------------------------------------------------
       # TLS
