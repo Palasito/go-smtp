@@ -1,6 +1,6 @@
 # ---- Go ----
 # Compiled binaries
-smtp-relay
+/smtp-relay
 *.exe
 *.exe~
 *.dll

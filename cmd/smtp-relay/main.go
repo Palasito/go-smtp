@@ -83,6 +83,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// If running as root (Docker default), fix ownership on mounted volumes
+	// then drop to non-root before opening any files.
+	ensureDirOwnership([]string{cfg.LogFile, cfg.TLSCertFilepath})
+	if err := dropPrivileges(); err != nil {
+		slog.Error("Failed to drop privileges", "error", err)
+		os.Exit(1)
+	}
+
 	// Configure structured logger with the requested log level and format.
 	lvl := logLevelFromString(cfg.LogLevel)
 	logCtx, logCtxCancel := context.WithCancel(context.Background())
