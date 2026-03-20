@@ -36,33 +36,7 @@ It accepts SMTP connections, authenticates clients via **OAuth 2.0 client creden
 - **Fixed docker-compose volume** — `./certs:/certs` (was unreachable path in scratch image).
 - **Fixed broken README doc links.**
 
-## What's new in v1.4
-
-- **Deterministic MIME header order** — `sanitizeHeaders` and `patchHeaders` now reconstruct headers in their original document order instead of random Go map iteration order, making logs reproducible and downstream consumers reliable.
-- **Per-attempt context timeout on Graph API** — each `SendMail` HTTP attempt now uses its own `context.WithTimeout` tied to `HTTP_TIMEOUT`, preventing indefinite hangs when the Graph endpoint is unresponsive.
-- **Azure Table lookup timeout** — `LookupUser` now applies a 30-second context timeout, preventing SMTP sessions from blocking indefinitely on slow Azure Tables responses.
-- **Token cache garbage collection** — a background goroutine sweeps expired entries from the in-memory OAuth token cache every 5 minutes, bounding memory growth for deployments with many distinct credential pairs.
-- **TLS safety auto-correction** — setting `REQUIRE_TLS=true` with `TLS_SOURCE=off` (a contradictory combination) now auto-corrects `TLS_SOURCE` to `auto` with a warning, instead of silently starting without TLS.
-- **OAuth token retry with backoff** — `GetAccessToken` now retries up to 3 attempts on transient errors (429, 500–504) with exponential backoff and Retry-After header support.
-- **Jitter in retry backoff** — both Graph API and OAuth retry delays now include ±20% random jitter to prevent thundering-herd retry storms under load.
-- **Message-ID and Subject in logs** — delivery success/failure log lines now include `messageId` and `subject` fields for easier correlation with upstream MTA logs.
-- **Session duration metric** — new `smtp_session_duration_seconds` Prometheus histogram tracks the lifetime of each SMTP session from connect to disconnect.
-- **Sender domain allowlist** — new `ALLOWED_FROM_DOMAINS` env var restricts which sender domains can relay through the server; unlisted domains receive `553 5.7.1`.
-- **SIGHUP-reloadable whitelist** — the IP whitelist is now rebuilt on `SIGHUP`, allowing operators to update `WHITELIST_IPS` and credentials without restarting.
-- **Max recipients limit** — new `MAX_RECIPIENTS` env var caps the number of `RCPT TO` addresses per message; the SMTP server rejects additional recipients with `452 4.5.3`.
-
-## What's new in v1.3
-
-- **SMTP session timeouts** — `SMTP_READ_TIMEOUT` and `SMTP_WRITE_TIMEOUT` cap idle reads and writes at the TCP level, protecting against slow or stalled clients that could otherwise hold connections open indefinitely.
-- **Health and readiness probes** — a lightweight HTTP server (default port `9090`) exposes `GET /healthz` (liveness) and `GET /readyz` (readiness) for use with Kubernetes, Docker, and load balancers. `GET /` serves an interactive HTML status dashboard with live auto-refresh.
-- **Prometheus metrics** — `GET /metrics` on the same health port serves an interactive HTML dashboard with grouped metric families, search, human-readable value formatting (bytes → KB/MB/GB, seconds → ms/s, ratios → %), and 15 s auto-refresh. `GET /metrics?$output=text` returns the raw Prometheus text format for scraper ingestion. Metrics covered: SMTP active connections, auth totals, message delivery counters and size histogram, Graph API latency and attempt histograms, OAuth token cache hit/miss counters, and webhook notification counters.
-- **SIGHUP config reload** — send `SIGHUP` to the process to hot-reload all reloadable fields (log level, timeouts, retry settings, webhook URL, whitelist, etc.) without restarting. Non-reloadable fields (`SMTP_PORT`, `HEALTH_PORT`, `TLS_SOURCE`) are detected and a warning is logged.
-
-## What's new in v1.2
-
-- **OAuth token caching** — access tokens are cached in memory (keyed by `SHA-256(tenantID+clientID+clientSecret)`) and reused until near-expiry, eliminating redundant Azure AD round-trips. Wrong credentials always miss the cache. Configurable safety margin via `TOKEN_CACHE_MARGIN`.
-- **Header sanitization** — when `SANITIZE_HEADERS=true`, privacy-sensitive headers (`Received`, `X-Originating-IP`, `X-Mailer`, `User-Agent`, etc.) are stripped from the message before it is forwarded to Graph API.
-- **Failure webhook** — set `FAILURE_WEBHOOK_URL` to receive a JSON `POST` whenever a message permanently fails delivery (after all retry attempts). Best-effort, fire-and-forget — never blocks or affects the SMTP response to the client.
+> For older versions (v1.4, v1.3, v1.2), see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -90,12 +64,33 @@ See the [Configuration](#configuration) section below for all environment variab
 
 ---
 
+## Quickstart
+
+Pull the latest image and run with minimal configuration:
+
+```bash
+docker pull ghcr.io/palasito/go-smtp:latest
+
+docker run -d \
+  --name smtp-relay \
+  -p 8025:8025 \
+  -p 9090:9090 \
+  -e TLS_SOURCE=auto \
+  -e LOG_LEVEL=INFO \
+  ghcr.io/palasito/go-smtp:latest
+```
+
+The relay is now listening on port `8025` (SMTP) and `9090` (health/metrics dashboard). Open `http://localhost:9090` for the status dashboard.
+
+For production use, provide real TLS certificates and Azure credentials — see the [Configuration](#configuration) section below.
+
+---
+
 ## Building
 
 ### From source
 
 ```bash
-cd go-smtp
 go build -o smtp-relay ./cmd/smtp-relay
 ```
 
@@ -106,14 +101,6 @@ CGO_ENABLED=0 go build -ldflags="-s -w" -trimpath -o smtp-relay ./cmd/smtp-relay
 ```
 
 ### Docker (multi-stage, scratch-based)
-
-Build from the **workspace root**:
-
-```bash
-docker build -t smtp-oauth-relay:go -f go-smtp/Dockerfile go-smtp/
-```
-
-Or from inside `go-smtp/`:
 
 ```bash
 docker build -t smtp-oauth-relay:go .
@@ -157,42 +144,107 @@ Use the existing [`docker-compose.yml`](docker-compose.yml) in the repo root.
 
 All configuration is via environment variables. The Go version uses **exactly the same variables** as the Python version, plus several Go-specific additions.
 
+### Logging
+
 | Variable | Default | Description |
 |---|---|---|
 | `LOG_LEVEL` | `WARNING` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
+
+### TLS
+
+| Variable | Default | Description |
+|---|---|---|
 | `TLS_SOURCE` | `file` | `off` / `auto` / `file` / `keyvault` — `auto` generates a self-signed ECDSA certificate at startup so STARTTLS works without provisioning certs |
 | `REQUIRE_TLS` | `true` | Require STARTTLS before AUTH |
-| `SERVER_GREETING` | `Microsoft Graph SMTP OAuth Relay` | EHLO banner string |
 | `TLS_CERT_FILEPATH` | `certs/cert.pem` | PEM certificate path (TLS_SOURCE=file) |
 | `TLS_KEY_FILEPATH` | `certs/key.pem` | PEM key path (TLS_SOURCE=file) |
 | `TLS_CIPHER_SUITE` | _(system default)_ | Colon-separated OpenSSL cipher names |
-| `USERNAME_DELIMITER` | `@` | Delimiter between tenant ID and client ID (`@`, `:`, or `\|`) |
-| `ALLOWED_FROM_DOMAINS` | _(optional)_ | Comma-separated list of allowed sender domains; unlisted domains are rejected with `553 5.7.1` |
-| `AZURE_KEY_VAULT_URL` | _(optional)_ | Key Vault URL (TLS_SOURCE=keyvault) |
+| `TLS_RELOAD_INTERVAL` | `0` | Seconds between automatic TLS certificate reloads (0 = disabled) |
+
+### Azure Key Vault (TLS_SOURCE=keyvault)
+
+| Variable | Default | Description |
+|---|---|---|
+| `AZURE_KEY_VAULT_URL` | _(optional)_ | Key Vault URL |
 | `AZURE_KEY_VAULT_CERT_NAME` | _(optional)_ | Secret name in Key Vault |
+
+### SMTP
+
+| Variable | Default | Description |
+|---|---|---|
+| `SERVER_GREETING` | `Microsoft Graph SMTP OAuth Relay` | EHLO banner string |
+| `USERNAME_DELIMITER` | `@` | Delimiter between tenant ID and client ID (`@`, `:`, or `\|`) |
+| `SMTP_PORT` | `8025` | TCP port the relay listens on |
+| `ALLOWED_FROM_DOMAINS` | _(optional)_ | Comma-separated list of allowed sender domains; unlisted domains are rejected with `553 5.7.1` |
+| `MAX_RECIPIENTS` | `0` | Maximum number of `RCPT TO` addresses per message (0 = unlimited) |
+| `MAX_MESSAGE_SIZE` | `36700160` | Maximum accepted message size in bytes (default 35 MB) |
+| `SMTP_READ_TIMEOUT` | `60` | Seconds before an idle SMTP read is timed out (per connection) |
+| `SMTP_WRITE_TIMEOUT` | `60` | Seconds before an idle SMTP write is timed out (per connection) |
+
+### Azure Tables (user credential lookup)
+
+| Variable | Default | Description |
+|---|---|---|
 | `AZURE_TABLES_URL` | _(optional)_ | Full table URL for user lookup |
 | `AZURE_TABLES_PARTITION_KEY` | `user` | Partition key for table lookups |
+
+### IP Whitelist (skip AUTH for trusted sources)
+
+| Variable | Default | Description |
+|---|---|---|
 | `WHITELIST_IPS` | _(optional)_ | Comma-separated IPs/CIDRs that skip AUTH |
 | `WHITELIST_TENANT_ID` | _(optional)_ | Tenant ID for whitelisted auto-auth |
 | `WHITELIST_CLIENT_ID` | _(optional)_ | Client ID for whitelisted auto-auth |
 | `WHITELIST_CLIENT_SECRET` | _(optional)_ | Client secret for whitelisted auto-auth |
 | `WHITELIST_FROM_EMAIL` | _(optional)_ | Override From address for whitelisted sessions |
-| `SMTP_PORT` | `8025` | TCP port the relay listens on |
-| `MAX_MESSAGE_SIZE` | `36700160` | Maximum accepted message size in bytes (default 35 MB) |
-| `MAX_RECIPIENTS` | `0` | Maximum number of `RCPT TO` addresses per message (0 = unlimited) |
+
+### Azure Cloud Endpoints (sovereign clouds)
+
+| Variable | Default | Description |
+|---|---|---|
+| `AZURE_AUTHORITY_HOST` | `https://login.microsoftonline.com` | OAuth authority URL (Azure Government, Azure China, etc.) |
+| `GRAPH_ENDPOINT` | `https://graph.microsoft.com` | Microsoft Graph base URL |
+
+### Reliability & Performance
+
+| Variable | Default | Description |
+|---|---|---|
 | `HTTP_TIMEOUT` | `30` | HTTP request timeout in seconds for Graph API / OAuth calls |
 | `RETRY_ATTEMPTS` | `3` | Total Graph API send attempts (1 = no retry) |
 | `RETRY_BASE_DELAY` | `1` | Base delay in seconds for exponential retry back-off |
 | `SHUTDOWN_TIMEOUT` | `30` | Seconds to wait for in-flight sessions to finish on `SIGTERM` |
-| `TLS_RELOAD_INTERVAL` | `0` | Seconds between automatic TLS certificate reloads (0 = disabled) |
 | `TOKEN_CACHE_MARGIN` | `300` | Seconds before token expiry at which the cache is considered stale and a fresh token is fetched |
+
+### Privacy & Notifications
+
+| Variable | Default | Description |
+|---|---|---|
 | `SANITIZE_HEADERS` | `false` | Strip privacy-sensitive headers (`Received`, `X-Originating-IP`, `X-Mailer`, `User-Agent`, etc.) before relaying |
 | `FAILURE_WEBHOOK_URL` | _(optional)_ | HTTP(S) URL to `POST` a JSON payload to on permanent delivery failure |
-| `SMTP_READ_TIMEOUT` | `60` | Seconds before an idle SMTP read is timed out (per connection) |
-| `SMTP_WRITE_TIMEOUT` | `60` | Seconds before an idle SMTP write is timed out (per connection) |
+
+### Health & Metrics
+
+| Variable | Default | Description |
+|---|---|---|
 | `HEALTH_PORT` | `9090` | TCP port for the health/readiness/metrics HTTP server |
-| `AZURE_AUTHORITY_HOST` | `https://login.microsoftonline.com` | OAuth authority URL (for sovereign clouds: Azure Government, Azure China, etc.) |
-| `GRAPH_ENDPOINT` | `https://graph.microsoft.com` | Microsoft Graph base URL (for sovereign clouds) |
+
+---
+
+## Hot-reload via SIGHUP
+
+Send `SIGHUP` to the relay process to re-read configuration from the environment **without restarting**:
+
+```bash
+# Docker
+docker kill --signal=SIGHUP go-smtp-relay
+
+# Bare process
+kill -HUP $(pidof smtp-relay)
+```
+
+**Reloadable at runtime** — `LOG_LEVEL`, `TOKEN_CACHE_MARGIN`, `HTTP_TIMEOUT`, `SMTP_READ_TIMEOUT`, `SMTP_WRITE_TIMEOUT`, all `WHITELIST_*` variables, `RETRY_ATTEMPTS`, `RETRY_BASE_DELAY`, `MAX_MESSAGE_SIZE`, `MAX_RECIPIENTS`, `SANITIZE_HEADERS`, `FAILURE_WEBHOOK_URL`, `ALLOWED_FROM_DOMAINS`, `SERVER_GREETING`, `USERNAME_DELIMITER`, `AZURE_AUTHORITY_HOST`, `GRAPH_ENDPOINT`, `SHUTDOWN_TIMEOUT`.
+
+**Require restart** — `SMTP_PORT`, `HEALTH_PORT`, `TLS_SOURCE`.
 
 ---
 
@@ -258,6 +310,8 @@ The only user-visible difference is a slightly different SMTP banner format in t
 
 ```
 go-smtp/
+├── .github/workflows/
+│   └── docker-publish.yml       # CI/CD: multi-arch Docker image to GHCR
 ├── cmd/smtp-relay/main.go       # Entrypoint: wires all components, starts server
 ├── internal/
 │   ├── config/config.go         # Environment variable loading and validation
@@ -267,7 +321,8 @@ go-smtp/
 │   │   ├── username.go          # Username parsing (UUID/base64url, Azure Table lookup)
 │   │   └── authenticator.go     # SMTP AUTH → OAuth flow
 │   ├── graph/graph.go           # Microsoft Graph sendMail (raw MIME, retry + back-off + jitter)
-│   ├── health/health.go         # Liveness, readiness, Prometheus /metrics, and /version HTTP handlers
+│   ├── handler/handler.go       # SMTP session handler (MAIL FROM / RCPT TO / DATA)
+│   ├── health/health.go         # Liveness, readiness, Prometheus /metrics, /version, dashboard
 │   ├── httpclient/client.go     # Shared singleton HTTP client with configurable timeout
 │   ├── metrics/metrics.go       # Prometheus metric declarations (default registry)
 │   ├── retry/retry.go           # Shared retry helpers (IsRetryable, Backoff with jitter)
@@ -276,6 +331,11 @@ go-smtp/
 │   ├── webhook/webhook.go       # Best-effort HTTP notification on permanent delivery failure
 │   ├── whitelist/whitelist.go   # IP/CIDR whitelist with auto-auth
 │   └── server/server.go         # go-smtp Backend + Session implementation
+├── certs/                       # TLS certificate directory (mounted at runtime)
+├── scripts/test-smtp.sh         # Basic smoke test
+├── .dockerignore                # Docker build exclusions
+├── CHANGELOG.md                 # Full version history (v1.1 – v1.5)
+├── docker-compose.yml           # Local development compose file
 ├── Dockerfile                   # Multi-stage build: golang:alpine → scratch
-└── scripts/test-smtp.sh         # Basic smoke test
+└── go.mod                       # Go module definition
 ```
