@@ -11,11 +11,11 @@ import (
 // Config holds all application configuration loaded from environment variables.
 type Config struct {
 	// Logging
-	LogLevel      string // LOG_LEVEL — default "WARNING", valid: DEBUG/INFO/WARNING/ERROR/CRITICAL
-	LogFile       string // LOG_FILE — optional, path to log file (logs are always written to stdout as well)
-	LogFormat     string // LOG_FORMAT — default "text", valid: text/json
-	LogRotateHours  int  // LOG_ROTATE_HOURS — default 1, hours between log file rotations (0 = no rotation)
-	LogRetentionDays int // LOG_RETENTION_DAYS — default 0, days to keep rotated log files (0 = keep forever)
+	LogLevel         string // LOG_LEVEL — default "WARNING", valid: DEBUG/INFO/WARNING/ERROR/CRITICAL
+	LogFile          string // LOG_FILE — optional, path to log file (logs are always written to stdout as well)
+	LogFormat        string // LOG_FORMAT — default "text", valid: text/json
+	LogRotateHours   int    // LOG_ROTATE_HOURS — default 1, hours between log file rotations (0 = no rotation)
+	LogRetentionDays int    // LOG_RETENTION_DAYS — default 0, days to keep rotated log files (0 = keep forever)
 
 	// TLS
 	TLSSource       string // TLS_SOURCE — default "file", valid: off/auto/file/keyvault
