@@ -47,8 +47,6 @@ COPY --from=build --chown=65534:65534 /app-dirs/certs /certs
 # Expose default SMTP and health ports (override at runtime via env vars)
 EXPOSE 8025 9090
 
-# Run as non-root user (nobody)
-USER 65534:65534
-
+# The binary starts as root to fix bind-mount ownership, then drops to 65534:65534.
 # Run the binary
 ENTRYPOINT ["/smtp-relay"]
