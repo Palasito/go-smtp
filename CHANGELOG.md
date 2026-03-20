@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## v1.5.1
+
+### Logging Overhaul
+- **Persistent file logging** — new `LOG_FILE` env var writes logs to both stdout and a file via `io.MultiWriter`. Parent directories are created automatically.
+- **Hourly log rotation** — new `LOG_ROTATE_HOURS` env var (default `1`). Timestamped filenames (e.g. `relay-2026-03-20T14.log`) are created at each rotation boundary.
+- **Automatic log retention** — new `LOG_RETENTION_DAYS` env var (default `0` = keep forever). A background goroutine periodically deletes log files older than the configured retention.
+- **JSON log format** — new `LOG_FORMAT` env var (`text` / `json`). `json` outputs structured JSON lines for log aggregation pipelines (ELK, Grafana Loki, Splunk, Azure Monitor).
+- **Startup banner in each log file** — every rotated file begins with a header line containing version, commit, build date, PID, and Go runtime version.
+- **SIGHUP hot-reload** — all five logging env vars (`LOG_LEVEL`, `LOG_FILE`, `LOG_FORMAT`, `LOG_ROTATE_HOURS`, `LOG_RETENTION_DAYS`) can be changed at runtime.
+- **New `internal/logfile` package** — zero-dependency rotating writer with `io.Writer` + `io.Closer` interface.
+
+---
+
 ## v1.5
 
 ### Security & Correctness

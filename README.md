@@ -149,7 +149,10 @@ All configuration is via environment variables. The Go version uses **exactly th
 | Variable | Default | Description |
 |---|---|---|
 | `LOG_LEVEL` | `WARNING` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
-| `LOG_FILE` | _(empty)_ | Path to a log file; logs are **always** written to stdout as well. Mount a volume (e.g. `./logs:/logs`) and set `LOG_FILE=/logs/relay.log` for persistent, host-accessible logs |
+| `LOG_FILE` | _(empty)_ | Path to a log file; logs are **always** written to stdout as well. Mount a volume (e.g. `./logs:/logs`) and set `LOG_FILE=/logs/relay.log` for persistent, host-accessible logs. When rotation is enabled, timestamped files are created (e.g. `relay-2026-03-20T14.log`) |
+| `LOG_FORMAT` | `text` | `text` / `json` — `json` outputs structured JSON lines, ideal for log aggregation (ELK, Loki, Splunk) |
+| `LOG_ROTATE_HOURS` | `1` | Hours between log file rotations (0 = no rotation, single file). Requires `LOG_FILE` to be set |
+| `LOG_RETENTION_DAYS` | `0` | Days to keep rotated log files; a background goroutine deletes older files automatically (0 = keep forever) |
 
 ### TLS
 
@@ -243,7 +246,7 @@ docker kill --signal=SIGHUP go-smtp-relay
 kill -HUP $(pidof smtp-relay)
 ```
 
-**Reloadable at runtime** — `LOG_LEVEL`, `LOG_FILE`, `TOKEN_CACHE_MARGIN`, `HTTP_TIMEOUT`, `SMTP_READ_TIMEOUT`, `SMTP_WRITE_TIMEOUT`, all `WHITELIST_*` variables, `RETRY_ATTEMPTS`, `RETRY_BASE_DELAY`, `MAX_MESSAGE_SIZE`, `MAX_RECIPIENTS`, `SANITIZE_HEADERS`, `FAILURE_WEBHOOK_URL`, `ALLOWED_FROM_DOMAINS`, `SERVER_GREETING`, `USERNAME_DELIMITER`, `AZURE_AUTHORITY_HOST`, `GRAPH_ENDPOINT`, `SHUTDOWN_TIMEOUT`.
+**Reloadable at runtime** — `LOG_LEVEL`, `LOG_FILE`, `LOG_FORMAT`, `LOG_ROTATE_HOURS`, `LOG_RETENTION_DAYS`, `TOKEN_CACHE_MARGIN`, `HTTP_TIMEOUT`, `SMTP_READ_TIMEOUT`, `SMTP_WRITE_TIMEOUT`, all `WHITELIST_*` variables, `RETRY_ATTEMPTS`, `RETRY_BASE_DELAY`, `MAX_MESSAGE_SIZE`, `MAX_RECIPIENTS`, `SANITIZE_HEADERS`, `FAILURE_WEBHOOK_URL`, `ALLOWED_FROM_DOMAINS`, `SERVER_GREETING`, `USERNAME_DELIMITER`, `AZURE_AUTHORITY_HOST`, `GRAPH_ENDPOINT`, `SHUTDOWN_TIMEOUT`.
 
 **Require restart** — `SMTP_PORT`, `HEALTH_PORT`, `TLS_SOURCE`.
 
@@ -325,6 +328,7 @@ go-smtp/
 │   ├── handler/handler.go       # SMTP session handler (MAIL FROM / RCPT TO / DATA)
 │   ├── health/health.go         # Liveness, readiness, Prometheus /metrics, /version, dashboard
 │   ├── httpclient/client.go     # Shared singleton HTTP client with configurable timeout
+│   ├── logfile/rotator.go       # Time-based rotating log writer with automatic retention cleanup
 │   ├── metrics/metrics.go       # Prometheus metric declarations (default registry)
 │   ├── retry/retry.go           # Shared retry helpers (IsRetryable, Backoff with jitter)
 │   ├── tls/tls.go               # TLS from PEM files, Azure Key Vault PKCS#12, or auto-generated self-signed; auto-reload
