@@ -16,6 +16,9 @@ import (
 	"github.com/Palasito/go-smtp/internal/metrics"
 )
 
+// webhookSem limits the number of concurrent in-flight webhook goroutines.
+var webhookSem = make(chan struct{}, 16)
+
 // FailurePayload is the JSON body POSTed to the webhook URL on a permanent
 // delivery failure (i.e. after all retry attempts have been exhausted).
 type FailurePayload struct {
@@ -24,6 +27,20 @@ type FailurePayload struct {
 	Error     string   `json:"error"`
 	Timestamp string   `json:"timestamp"` // RFC 3339
 	Attempts  int      `json:"attempts"`
+}
+
+// NotifyFailureAsync dispatches NotifyFailure in a bounded goroutine pool.
+// If the semaphore is full, the notification is dropped and a warning is logged.
+func NotifyFailureAsync(webhookURL string, payload FailurePayload) {
+	select {
+	case webhookSem <- struct{}{}:
+		go func() {
+			defer func() { <-webhookSem }()
+			NotifyFailure(webhookURL, payload)
+		}()
+	default:
+		slog.Warn("Webhook: goroutine pool full, dropping notification", "from", payload.From)
+	}
 }
 
 // NotifyFailure posts payload to webhookURL as a JSON body.

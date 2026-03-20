@@ -1,7 +1,10 @@
 .git
 .github
 docs/
+certs/
+scripts/
 *.md
 LICENSE
 .gitignore
 .dockerignore
+docker-compose.yml

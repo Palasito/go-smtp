@@ -15,14 +15,14 @@ type AuthResult struct {
 // username is parsed via ParseUsername to extract tenantID+clientID.
 // password is used as the client_secret for the OAuth flow.
 // Returns AuthResult with the access token, or error with SMTP-appropriate message.
-func Authenticate(username, password, delimiter, tablesURL, partitionKey string) (*AuthResult, error) {
+func Authenticate(username, password, delimiter, tablesURL, partitionKey, authorityHost, graphEndpoint string) (*AuthResult, error) {
 	tenantID, clientID, fromEmail, err := ParseUsername(username, delimiter, tablesURL, partitionKey)
 	if err != nil {
 		slog.Error("Failed to parse SMTP username", "username", username, "error", err)
 		return nil, fmt.Errorf("535 5.7.8 %s", err)
 	}
 
-	token, err := GetAccessToken(tenantID, clientID, password)
+	token, err := GetAccessToken(tenantID, clientID, password, authorityHost, graphEndpoint)
 	if err != nil {
 		slog.Error("OAuth token acquisition failed", "tenantID", tenantID, "clientID", clientID, "error", err)
 		return nil, fmt.Errorf("535 5.7.8 Authentication failed")

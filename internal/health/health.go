@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/Palasito/go-smtp/internal/version"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -624,6 +625,19 @@ func NewMux(readyFn ReadinessFunc) *http.ServeMux {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if _, err := w.Write([]byte(metricsHTML)); err != nil {
 			slog.Debug("metrics: failed to write response", "error", err)
+		}
+	})
+
+	// Version — returns build metadata as JSON.
+	mux.HandleFunc("GET /version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(map[string]string{
+			"version":   version.Version,
+			"commit":    version.Commit,
+			"buildDate": version.BuildDate,
+		}); err != nil {
+			slog.Debug("version: failed to write response", "error", err)
 		}
 	})
 

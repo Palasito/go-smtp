@@ -6,7 +6,10 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/Palasito/go-smtp/internal/metrics"
 )
 
 // tokenEntry holds a cached access token and its effective expiry time.
@@ -19,16 +22,25 @@ var (
 	tokenCacheMu    sync.RWMutex
 	tokenCacheStore = make(map[string]tokenEntry)
 
-	// tokenCacheMarginSecs is subtracted from the token's expires_in before
+	// tokenCacheMargin is subtracted from the token's expires_in before
 	// caching, so the token is refreshed before it actually expires at Azure AD.
 	// Configured via SetTokenCacheMargin — default 300 (5 minutes).
-	tokenCacheMarginSecs = 300
+	tokenCacheMargin atomic.Int32
 )
 
+func init() {
+	tokenCacheMargin.Store(300)
+}
+
 // SetTokenCacheMargin sets the number of seconds to subtract from a token's
-// expires_in when computing the effective cache TTL. Call once at startup.
+// expires_in when computing the effective cache TTL.
 func SetTokenCacheMargin(seconds int) {
-	tokenCacheMarginSecs = seconds
+	tokenCacheMargin.Store(int32(seconds))
+}
+
+// getTokenCacheMargin returns the current margin in seconds.
+func getTokenCacheMargin() int {
+	return int(tokenCacheMargin.Load())
 }
 
 // CacheKey returns a SHA-256 hex digest of the concatenated tenantID, clientID,
@@ -37,7 +49,7 @@ func SetTokenCacheMargin(seconds int) {
 //   - A client supplying an incorrect secret always produces a different key,
 //     causing a cache miss and a live Azure AD validation attempt.
 func CacheKey(tenantID, clientID, clientSecret string) string {
-	h := sha256.Sum256([]byte(tenantID + clientID + clientSecret))
+	h := sha256.Sum256([]byte(tenantID + "\x00" + clientID + "\x00" + clientSecret))
 	return hex.EncodeToString(h[:])
 }
 
@@ -79,6 +91,7 @@ func SetToken(key, accessToken string, expiresIn, marginSeconds int) {
 		accessToken: accessToken,
 		expiresAt:   time.Now().Add(time.Duration(effective) * time.Second),
 	}
+	metrics.TokenCacheSize.Set(float64(len(tokenCacheStore)))
 	tokenCacheMu.Unlock()
 }
 
@@ -102,6 +115,7 @@ func StartCacheGC(ctx context.Context, interval time.Duration) {
 						evicted++
 					}
 				}
+				metrics.TokenCacheSize.Set(float64(len(tokenCacheStore)))
 				tokenCacheMu.Unlock()
 				if evicted > 0 {
 					slog.Debug("Token cache GC completed", "evicted", evicted)

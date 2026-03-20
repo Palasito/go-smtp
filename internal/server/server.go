@@ -10,6 +10,7 @@ import (
 	"net/mail"
 	"net/textproto"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Palasito/go-smtp/internal/auth"
@@ -20,13 +21,26 @@ import (
 	"github.com/Palasito/go-smtp/internal/whitelist"
 	"github.com/emersion/go-sasl"
 	smtp "github.com/emersion/go-smtp"
+	"github.com/google/uuid"
 )
 
 // Backend implements smtp.Backend.
 type Backend struct {
-	Config    *config.Config
-	Whitelist *whitelist.WhitelistConfig // may be nil
+	config    atomic.Pointer[config.Config]
+	whitelist atomic.Pointer[whitelist.WhitelistConfig]
 }
+
+// SetConfig atomically replaces the current configuration.
+func (b *Backend) SetConfig(cfg *config.Config) { b.config.Store(cfg) }
+
+// GetConfig atomically loads the current configuration.
+func (b *Backend) GetConfig() *config.Config { return b.config.Load() }
+
+// SetWhitelist atomically replaces the current whitelist (may be nil).
+func (b *Backend) SetWhitelist(wl *whitelist.WhitelistConfig) { b.whitelist.Store(wl) }
+
+// GetWhitelist atomically loads the current whitelist (may be nil).
+func (b *Backend) GetWhitelist() *whitelist.WhitelistConfig { return b.whitelist.Load() }
 
 // NewSession is called for each new SMTP connection.
 // It extracts the remote IP, checks whitelist membership, and returns a new Session.
@@ -36,14 +50,21 @@ func (b *Backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 		ip = tcpAddr.IP.String()
 	}
 
-	whitelisted := b.Whitelist != nil && b.Whitelist.IsWhitelisted(ip)
+	wl := b.GetWhitelist()
+	whitelisted := wl != nil && wl.IsWhitelisted(ip)
+
+	sessionID := uuid.New().String()
 	if whitelisted {
-		slog.Info("Whitelisted IP connected, AUTH will be skipped", "ip", ip)
+		slog.Info("Whitelisted IP connected, AUTH will be skipped", "session", sessionID, "ip", ip)
 	}
 
+	cfg := b.GetConfig()
 	metrics.ActiveConnections.Inc()
+	metrics.ConnectionsTotal.Inc()
 	return &Session{
-		backend:     b,
+		id:          sessionID,
+		cfg:         cfg,
+		wl:          wl,
 		whitelisted: whitelisted,
 		connectedAt: time.Now(),
 	}, nil
@@ -51,7 +72,9 @@ func (b *Backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 
 // Session implements smtp.Session.
 type Session struct {
-	backend     *Backend
+	id          string // unique correlation ID for this session
+	cfg         *config.Config
+	wl          *whitelist.WhitelistConfig
 	accessToken string
 	fromEmail   string // override From header (from lookup table or whitelist config)
 	from        string // SMTP envelope MAIL FROM address
@@ -74,12 +97,14 @@ func (s *Session) Auth(mech string) (sasl.Server, error) {
 	doAuth := func(username, password string) error {
 		result, err := auth.Authenticate(
 			username, password,
-			s.backend.Config.UsernameDelimiter,
-			s.backend.Config.AzureTablesURL,
-			s.backend.Config.AzureTablesPartKey,
+			s.cfg.UsernameDelimiter,
+			s.cfg.AzureTablesURL,
+			s.cfg.AzureTablesPartKey,
+			s.cfg.AzureAuthorityHost,
+			s.cfg.GraphEndpoint,
 		)
 		if err != nil {
-			slog.Warn("Authentication failed", "error", err)
+			slog.Warn("Authentication failed", "session", s.id, "error", err)
 			metrics.AuthTotal.WithLabelValues("failure").Inc()
 			return &smtp.SMTPError{
 				Code:         535,
@@ -90,7 +115,7 @@ func (s *Session) Auth(mech string) (sasl.Server, error) {
 		s.accessToken = result.AccessToken
 		s.fromEmail = result.FromEmail
 		metrics.AuthTotal.WithLabelValues("success").Inc()
-		slog.Info("SMTP session authenticated", "fromEmail", s.fromEmail)
+		slog.Info("SMTP session authenticated", "session", s.id, "fromEmail", s.fromEmail)
 		return nil
 	}
 
@@ -145,10 +170,11 @@ func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
 	s.from = from
 
 	if s.whitelisted && s.accessToken == "" {
-		wl := s.backend.Whitelist
-		token, err := auth.GetAccessToken(wl.TenantID, wl.ClientID, wl.ClientSecret)
+		wl := s.wl
+		token, err := auth.GetAccessToken(wl.TenantID, wl.ClientID, wl.ClientSecret, s.cfg.AzureAuthorityHost, s.cfg.GraphEndpoint)
 		if err != nil {
-			slog.Error("Auto-authentication failed for whitelisted session", "error", err)
+			slog.Error("Auto-authentication failed for whitelisted session", "session", s.id, "error", err)
+			metrics.WhitelistAuthTotal.WithLabelValues("failure").Inc()
 			return &smtp.SMTPError{
 				Code:         454,
 				EnhancedCode: smtp.EnhancedCode{4, 7, 0},
@@ -157,7 +183,8 @@ func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
 		}
 		s.accessToken = token
 		s.fromEmail = wl.FromEmail
-		slog.Info("Auto-authenticated whitelisted session")
+		metrics.WhitelistAuthTotal.WithLabelValues("success").Inc()
+		slog.Info("Auto-authenticated whitelisted session", "session", s.id)
 		return nil
 	}
 
@@ -170,11 +197,11 @@ func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
 	}
 
 	// Enforce sender domain allowlist if configured.
-	if domains := s.backend.Config.AllowedFromDomains; len(domains) > 0 {
+	if domains := s.cfg.AllowedFromDomains; len(domains) > 0 {
 		fromLower := strings.ToLower(from)
 		atIdx := strings.LastIndex(fromLower, "@")
 		if atIdx < 0 {
-			slog.Warn("MAIL FROM rejected: no domain in address", "from", from)
+			slog.Warn("MAIL FROM rejected: no domain in address", "session", s.id, "from", from)
 			return &smtp.SMTPError{
 				Code:         553,
 				EnhancedCode: smtp.EnhancedCode{5, 7, 1},
@@ -192,7 +219,7 @@ func (s *Session) Mail(from string, opts *smtp.MailOptions) error {
 			}
 		}
 		if !allowed {
-			slog.Warn("MAIL FROM rejected: domain not in allowlist", "from", from, "domain", domain)
+			slog.Warn("MAIL FROM rejected: domain not in allowlist", "session", s.id, "from", from, "domain", domain)
 			return &smtp.SMTPError{
 				Code:         553,
 				EnhancedCode: smtp.EnhancedCode{5, 7, 1},
@@ -215,7 +242,7 @@ func (s *Session) Rcpt(to string, opts *smtp.RcptOptions) error {
 // then forwards the message to Microsoft Graph API.
 func (s *Session) Data(r io.Reader) error {
 	if s.accessToken == "" {
-		slog.Error("DATA received but session has no access token")
+		slog.Error("DATA received but session has no access token", "session", s.id)
 		return &smtp.SMTPError{
 			Code:         530,
 			EnhancedCode: smtp.EnhancedCode{5, 7, 0},
@@ -226,10 +253,10 @@ func (s *Session) Data(r io.Reader) error {
 	// Enforce the server-side message size limit.  We read one extra byte so
 	// that an exact-limit message is still accepted while an over-limit one is
 	// unambiguously detected.
-	maxSize := s.backend.Config.MaxMessageSize
+	maxSize := s.cfg.MaxMessageSize
 	raw, err := io.ReadAll(io.LimitReader(r, maxSize+1))
 	if err != nil {
-		slog.Error("Failed to read DATA body", "error", err)
+		slog.Error("Failed to read DATA body", "session", s.id, "error", err)
 		return &smtp.SMTPError{
 			Code:         554,
 			EnhancedCode: smtp.EnhancedCode{5, 0, 0},
@@ -237,7 +264,7 @@ func (s *Session) Data(r io.Reader) error {
 		}
 	}
 	if int64(len(raw)) > maxSize {
-		slog.Warn("Message rejected: exceeds size limit", "size", len(raw), "limit", maxSize)
+		slog.Warn("Message rejected: exceeds size limit", "session", s.id, "size", len(raw), "limit", maxSize)
 		metrics.MessagesTotal.WithLabelValues("rejected").Inc()
 		return &smtp.SMTPError{
 			Code:         552,
@@ -249,7 +276,7 @@ func (s *Session) Data(r io.Reader) error {
 	// Patch MIME headers: inject missing To:, replace From: if fromEmail is set.
 	patched, err := patchHeaders(raw, s.to, s.fromEmail)
 	if err != nil {
-		slog.Error("Failed to patch MIME headers", "error", err)
+		slog.Error("Failed to patch MIME headers", "session", s.id, "error", err)
 		return &smtp.SMTPError{
 			Code:         554,
 			EnhancedCode: smtp.EnhancedCode{5, 0, 0},
@@ -267,10 +294,10 @@ func (s *Session) Data(r io.Reader) error {
 		}
 	}
 
-	slog.Info("Handling message", "from", s.from, "to", s.to, "messageId", msgID, "subject", subject)
+	slog.Info("Handling message", "session", s.id, "from", s.from, "to", s.to, "messageId", msgID, "subject", subject)
 
 	// Optionally strip privacy-sensitive headers before forwarding.
-	if s.backend.Config.SanitizeHeaders {
+	if s.cfg.SanitizeHeaders {
 		patched = sanitizeHeaders(patched)
 	}
 
@@ -282,18 +309,19 @@ func (s *Session) Data(r io.Reader) error {
 
 	if err := graph.SendMail(
 		s.accessToken, patched, sender,
-		s.backend.Config.RetryAttempts,
-		time.Duration(s.backend.Config.RetryBaseDelay)*time.Second,
-		time.Duration(s.backend.Config.HTTPTimeout)*time.Second,
+		s.cfg.RetryAttempts,
+		time.Duration(s.cfg.RetryBaseDelay)*time.Second,
+		time.Duration(s.cfg.HTTPTimeout)*time.Second,
+		s.cfg.GraphEndpoint,
 	); err != nil {
-		slog.Error("Graph API send failed", "error", err, "messageId", msgID)
-		if s.backend.Config.FailureWebhookURL != "" {
-			go webhook.NotifyFailure(s.backend.Config.FailureWebhookURL, webhook.FailurePayload{
+		slog.Error("Graph API send failed", "session", s.id, "error", err, "messageId", msgID)
+		if s.cfg.FailureWebhookURL != "" {
+			webhook.NotifyFailureAsync(s.cfg.FailureWebhookURL, webhook.FailurePayload{
 				From:      sender,
 				To:        s.to,
 				Error:     err.Error(),
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
-				Attempts:  s.backend.Config.RetryAttempts,
+				Attempts:  s.cfg.RetryAttempts,
 			})
 		}
 		// Permanent failures (e.g. 400 Bad Request, 403 Forbidden from Graph) get a 5xx so
@@ -319,7 +347,8 @@ func (s *Session) Data(r io.Reader) error {
 
 	metrics.MessagesTotal.WithLabelValues("sent").Inc()
 	metrics.MessageSize.Observe(float64(len(patched)))
-	slog.Info("Message delivered successfully", "sender", sender, "recipients", s.to, "messageId", msgID)
+	metrics.RecipientsPerMessage.Observe(float64(len(s.to)))
+	slog.Info("Message delivered successfully", "session", s.id, "sender", sender, "recipients", s.to, "messageId", msgID)
 	return nil
 }
 

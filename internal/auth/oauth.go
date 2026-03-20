@@ -6,20 +6,19 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
-	"math/rand"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Palasito/go-smtp/internal/httpclient"
 	"github.com/Palasito/go-smtp/internal/metrics"
+	"github.com/Palasito/go-smtp/internal/retry"
 )
 
-// tokenEndpoint is the Microsoft identity platform token URL template.
-const tokenEndpoint = "https://login.microsoftonline.com/%s/oauth2/v2.0/token"
+// tokenEndpointFmt is the Microsoft identity platform token URL template.
+// The first %s is the authority host, the second is the tenant ID.
+const tokenEndpointFmt = "%s/%s/oauth2/v2.0/token"
 
 // tokenResponse holds the fields we care about from the token endpoint JSON response.
 type tokenResponse struct {
@@ -27,47 +26,6 @@ type tokenResponse struct {
 	ExpiresIn   int    `json:"expires_in"`
 	Error       string `json:"error"`
 	ErrorDesc   string `json:"error_description"`
-}
-
-// isRetryableTokenStatus returns true for HTTP status codes that indicate a
-// transient failure worth retrying.
-func isRetryableTokenStatus(code int) bool {
-	switch code {
-	case http.StatusTooManyRequests,
-		http.StatusInternalServerError,
-		http.StatusBadGateway,
-		http.StatusServiceUnavailable,
-		http.StatusGatewayTimeout:
-		return true
-	}
-	return false
-}
-
-// tokenBackoff computes the delay before the next retry. It honours the
-// Retry-After header when present and falls back to exponential backoff
-// capped at 30 s.
-func tokenBackoff(resp *http.Response, attempt int) time.Duration {
-	const maxDelay = 30 * time.Second
-	base := 1 * time.Second
-	if resp != nil {
-		if ra := resp.Header.Get("Retry-After"); ra != "" {
-			if secs, err := strconv.Atoi(ra); err == nil && secs > 0 {
-				d := time.Duration(secs) * time.Second
-				if d > maxDelay {
-					return maxDelay
-				}
-				return d
-			}
-		}
-	}
-	d := time.Duration(float64(base) * math.Pow(2, float64(attempt)))
-	// Add ±20% jitter to avoid thundering-herd retry storms.
-	jitter := 0.8 + rand.Float64()*0.4 // [0.8, 1.2)
-	d = time.Duration(float64(d) * jitter)
-	if d > maxDelay {
-		return maxDelay
-	}
-	return d
 }
 
 // GetAccessToken exchanges client credentials for a Microsoft Graph API access token.
@@ -78,7 +36,7 @@ func tokenBackoff(resp *http.Response, attempt int) time.Duration {
 //
 // Retries up to 3 attempts on transient errors (429/5xx) and transport failures
 // with exponential backoff. Returns the access_token string or a descriptive error.
-func GetAccessToken(tenantID, clientID, clientSecret string) (string, error) {
+func GetAccessToken(tenantID, clientID, clientSecret, authorityHost, graphEndpoint string) (string, error) {
 	// Check the in-memory cache first. The cache key is a SHA-256 hash of all
 	// three credentials, so a wrong clientSecret always produces a different key
 	// and will never match a previously cached entry for different credentials.
@@ -90,13 +48,14 @@ func GetAccessToken(tenantID, clientID, clientSecret string) (string, error) {
 	}
 	metrics.TokenCacheMisses.Inc()
 
-	endpoint := fmt.Sprintf(tokenEndpoint, tenantID)
+	endpoint := fmt.Sprintf(tokenEndpointFmt, authorityHost, tenantID)
+	scope := graphEndpoint + "/.default"
 
 	form := url.Values{
 		"grant_type":    {"client_credentials"},
 		"client_id":     {clientID},
 		"client_secret": {clientSecret},
-		"scope":         {"https://graph.microsoft.com/.default"},
+		"scope":         {scope},
 	}
 
 	const maxAttempts = 3
@@ -118,7 +77,7 @@ func GetAccessToken(tenantID, clientID, clientSecret string) (string, error) {
 			slog.Warn("OAuth token request transport error, retrying",
 				"attempt", attempt+1, "max", maxAttempts, "error", err,
 			)
-			time.Sleep(tokenBackoff(nil, attempt))
+			time.Sleep(retry.Backoff(nil, attempt, 1*time.Second, 30*time.Second))
 			continue
 		}
 
@@ -142,7 +101,7 @@ func GetAccessToken(tenantID, clientID, clientSecret string) (string, error) {
 				return "", fmt.Errorf("no access_token in response: %s — %s", tr.Error, tr.ErrorDesc)
 			}
 
-			SetToken(key, tr.AccessToken, tr.ExpiresIn, tokenCacheMarginSecs)
+			SetToken(key, tr.AccessToken, tr.ExpiresIn, getTokenCacheMargin())
 			slog.Info("OAuth access token acquired and cached", "tenant", tenantID, "client_id", clientID)
 			return tr.AccessToken, nil
 		}
@@ -152,13 +111,13 @@ func GetAccessToken(tenantID, clientID, clientSecret string) (string, error) {
 			excerpt = excerpt[:500]
 		}
 
-		if isRetryableTokenStatus(resp.StatusCode) {
+		if retry.IsRetryable(resp.StatusCode) {
 			lastErr = fmt.Errorf("token request returned HTTP %d: %s", resp.StatusCode, excerpt)
 			slog.Warn("OAuth token request returned retryable status, retrying",
 				"attempt", attempt+1, "max", maxAttempts,
 				"status", resp.StatusCode, "tenant", tenantID,
 			)
-			time.Sleep(tokenBackoff(resp, attempt))
+			time.Sleep(retry.Backoff(resp, attempt, 1*time.Second, 30*time.Second))
 			continue
 		}
 
