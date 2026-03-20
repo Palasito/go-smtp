@@ -85,6 +85,12 @@ services:
       #- TOKEN_CACHE_MARGIN=300        # Seconds before token expiry to treat cache as stale  (default: 300)
 
       # ---------------------------------------------------------------------------
+      # Azure cloud endpoints  (v1.5 — sovereign cloud support)
+      # ---------------------------------------------------------------------------
+      #- AZURE_AUTHORITY_HOST=https://login.microsoftonline.com   # OAuth authority URL  (default: https://login.microsoftonline.com)
+      #- GRAPH_ENDPOINT=https://graph.microsoft.com               # Microsoft Graph base URL  (default: https://graph.microsoft.com)
+
+      # ---------------------------------------------------------------------------
       # Privacy
       # ---------------------------------------------------------------------------
       #- SANITIZE_HEADERS=false       # Strip Received/X-Originating-IP/X-Mailer/User-Agent etc.  (default: false)
