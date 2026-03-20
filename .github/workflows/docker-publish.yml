@@ -40,7 +40,7 @@ jobs:
       - name: Set build metadata
         id: meta
         run: |
-          echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "version=$(git describe --tags --always 2>/dev/null || echo 'dev')" >> "$GITHUB_OUTPUT"
           echo "commit=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
           echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 

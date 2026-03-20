@@ -1,4 +1,4 @@
-# (Go) SMTP OAuth Relay — v1.4
+# (Go) SMTP OAuth Relay — v1.5
 
 [![Docker Image](https://github.com/Palasito/go-smtp/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Palasito/go-smtp/actions/workflows/docker-publish.yml)
 
@@ -6,20 +6,23 @@ A high-performance, statically-linked Go port of the [Python SMTP-to-Microsoft-G
 
 It accepts SMTP connections, authenticates clients via **OAuth 2.0 client credentials**, and delivers messages through the **Microsoft Graph API** (`sendMail`). It is a **drop-in replacement** for the Python version — all environment variables, the SMTP port, and the observable behaviour are identical.
 
-## What's new in v1.4
+## What's new in v1.5
 
-- **Deterministic MIME header order** — `sanitizeHeaders` and `patchHeaders` now reconstruct headers in their original document order instead of random Go map iteration order, making logs reproducible and downstream consumers reliable.
-- **Per-attempt context timeout on Graph API** — each `SendMail` HTTP attempt now uses its own `context.WithTimeout` tied to `HTTP_TIMEOUT`, preventing indefinite hangs when the Graph endpoint is unresponsive.
-- **Azure Table lookup timeout** — `LookupUser` now applies a 30-second context timeout, preventing SMTP sessions from blocking indefinitely on slow Azure Tables responses.
-- **Token cache garbage collection** — a background goroutine sweeps expired entries from the in-memory OAuth token cache every 5 minutes, bounding memory growth for deployments with many distinct credential pairs.
-- **TLS safety auto-correction** — setting `REQUIRE_TLS=true` with `TLS_SOURCE=off` (a contradictory combination) now auto-corrects `TLS_SOURCE` to `auto` with a warning, instead of silently starting without TLS.
-- **OAuth token retry with backoff** — `GetAccessToken` now retries up to 3 attempts on transient errors (429, 500–504) with exponential backoff and Retry-After header support.
-- **Jitter in retry backoff** — both Graph API and OAuth retry delays now include ±20% random jitter to prevent thundering-herd retry storms under load.
-- **Message-ID and Subject in logs** — delivery success/failure log lines now include `messageId` and `subject` fields for easier correlation with upstream MTA logs.
-- **Session duration metric** — new `smtp_session_duration_seconds` Prometheus histogram tracks the lifetime of each SMTP session from connect to disconnect.
-- **Sender domain allowlist** — new `ALLOWED_FROM_DOMAINS` env var restricts which sender domains can relay through the server; unlisted domains receive `553 5.7.1`.
-- **SIGHUP-reloadable whitelist** — the IP whitelist is now rebuilt on `SIGHUP`, allowing operators to update `WHITELIST_IPS` and credentials without restarting.
-- **Max recipients limit** — new `MAX_RECIPIENTS` env var caps the number of `RCPT TO` addresses per message; the SMTP server rejects additional recipients with `452 4.5.3`.
+- **CacheKey hash collision fix** — token cache keys now use null-byte separators between fields, preventing hash collisions between similar credential combinations.
+- **OData injection fix** — single quotes in Azure Table lookup values are now properly escaped.
+- **Backend config race fix** — `Config` and `Whitelist` are stored in `atomic.Pointer` with per-session snapshots, eliminating data races during SIGHUP reloads.
+- **Token cache margin race fix** — replaced bare `int` with `atomic.Int32` for the cache margin.
+- **Non-root container** — Docker image now runs as `USER 65534:65534` (nobody).
+- **Bounded webhook goroutines** — semaphore-limited (cap 16) with fire-and-forget semantics; excess notifications are dropped.
+- **Port collision validation** — startup rejects `SMTP_PORT == HEALTH_PORT` with a clear error.
+- **Per-session correlation IDs** — every session log line includes a UUID for end-to-end tracing.
+- **Build version injection** — `Version`, `Commit`, `BuildDate` injected via `-ldflags`; exposed at `GET /version`.
+- **Startup metadata log** — logs version, Go runtime, PID, and key config values on boot.
+- **New Prometheus metrics** — `smtp_connections_total`, `smtp_whitelist_auth_total`, `smtp_recipients_per_message`, `smtp_token_cache_size`.
+- **Sovereign cloud support** — new `AZURE_AUTHORITY_HOST` and `GRAPH_ENDPOINT` env vars for Azure Government, Azure China, etc.
+- **Real readiness probe** — `/readyz` now TCP-dials the SMTP port instead of always returning 200.
+- **Shared retry package** — deduplicated retry/backoff logic into `internal/retry`.
+- **Version dashboard card** — the status dashboard now shows the running version, commit, and build date.
 
 ## What's new in v1.3
 
@@ -125,7 +128,7 @@ Use the existing [`docker-compose.yml`](docker-compose.yml) in the repo root.
 
 ## Configuration
 
-All configuration is via environment variables. The Go version uses **exactly the same variables** as the Python version — see [docs/configuration.md](../docs/configuration.md) for the full reference.
+All configuration is via environment variables. The Go version uses **exactly the same variables** as the Python version, plus a few Go-specific additions.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -161,6 +164,8 @@ All configuration is via environment variables. The Go version uses **exactly th
 | `SMTP_READ_TIMEOUT` | `60` | Seconds before an idle SMTP read is timed out (per connection) |
 | `SMTP_WRITE_TIMEOUT` | `60` | Seconds before an idle SMTP write is timed out (per connection) |
 | `HEALTH_PORT` | `9090` | TCP port for the health/readiness/metrics HTTP server |
+| `AZURE_AUTHORITY_HOST` | `https://login.microsoftonline.com` | OAuth authority URL (sovereign clouds: Azure Government, Azure China, etc.) |
+| `GRAPH_ENDPOINT` | `https://graph.microsoft.com` | Microsoft Graph base URL (sovereign clouds) |
 
 ---
 
@@ -172,9 +177,10 @@ The relay exposes a secondary HTTP server (default `:9090`) alongside the SMTP l
 |---|---|---|
 | `/` | `GET` | Interactive status dashboard (HTML) — live liveness/readiness/metrics cards, auto-refreshes every 5 s |
 | `/healthz` | `GET` | Liveness probe — always `200 OK` while the process is alive |
-| `/readyz` | `GET` | Readiness probe — `200 OK` / `503` |
+| `/readyz` | `GET` | Readiness probe — `200 OK` when SMTP port is reachable / `503` otherwise |
 | `/metrics` | `GET` | Interactive Prometheus metrics dashboard (HTML) — grouped metric families, search, auto-refreshes every 15 s |
 | `/metrics?$output=text` | `GET` | Raw Prometheus text exposition format for scraper ingestion |
+| `/version` | `GET` | Build metadata JSON: `{version, commit, buildDate}` |
 
 Set `HEALTH_PORT` to change the port. All endpoints are unauthenticated — bind the health server to a private interface or apply network-level access controls as appropriate.
 
