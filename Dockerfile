@@ -28,6 +28,9 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=${TARGETVARIANT#v} go 
       -X github.com/Palasito/go-smtp/internal/version.BuildDate=${BUILD_DATE}" \
     -trimpath -o /smtp-relay ./cmd/smtp-relay
 
+# Create writable directories owned by nobody (65534) for the scratch stage
+RUN mkdir -p /app-dirs/logs /app-dirs/certs && chown -R 65534:65534 /app-dirs
+
 # ---- Runtime Stage ----
 FROM scratch
 
@@ -36,6 +39,10 @@ COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 # Copy the binary
 COPY --from=build /smtp-relay /smtp-relay
+
+# Create writable /logs and /certs directories owned by nobody
+COPY --from=build --chown=65534:65534 /app-dirs/logs /logs
+COPY --from=build --chown=65534:65534 /app-dirs/certs /certs
 
 # Expose default SMTP and health ports (override at runtime via env vars)
 EXPOSE 8025 9090
