@@ -48,7 +48,7 @@ SMTP Client → smtp-oauth-relay:8025 → Microsoft Graph API → recipient mail
 4. The relay exchanges the credentials for a Graph API access token
 5. The raw MIME message is forwarded to `POST /v1.0/users/{from}/sendMail`
 
-See [docs/authentication.md](../docs/authentication.md) for the full username format and [docs/configuration.md](../docs/configuration.md) for all environment variables.
+See the [Configuration](#configuration) section below for all environment variables.
 
 ---
 
@@ -119,7 +119,7 @@ docker run -d \
 
 ### Docker Compose
 
-Use the existing [`docker-compose.yml`](../docker-compose.yml) in the repo root. Change the `image:` or `build:` context to point at `go-smtp/`.
+Use the existing [`docker-compose.yml`](docker-compose.yml) in the repo root.
 
 ---
 
@@ -234,10 +234,12 @@ go-smtp/
 │   │   ├── username.go          # Username parsing (UUID/base64url, Azure Table lookup)
 │   │   └── authenticator.go     # SMTP AUTH → OAuth flow
 │   ├── graph/graph.go           # Microsoft Graph sendMail (raw MIME, retry + back-off + jitter)
-│   ├── health/health.go         # Liveness, readiness, and Prometheus /metrics HTTP handlers
+│   ├── health/health.go         # Liveness, readiness, Prometheus /metrics, and /version HTTP handlers
 │   ├── httpclient/client.go     # Shared singleton HTTP client with configurable timeout
 │   ├── metrics/metrics.go       # Prometheus metric declarations (default registry)
+│   ├── retry/retry.go           # Shared retry helpers (IsRetryable, Backoff with jitter)
 │   ├── tls/tls.go               # TLS from PEM files, Azure Key Vault PKCS#12, or auto-generated self-signed; auto-reload
+│   ├── version/version.go       # Build-time metadata (version, commit, build date) via ldflags
 │   ├── webhook/webhook.go       # Best-effort HTTP notification on permanent delivery failure
 │   ├── whitelist/whitelist.go   # IP/CIDR whitelist with auto-auth
 │   └── server/server.go         # go-smtp Backend + Session implementation

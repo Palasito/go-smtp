@@ -6,30 +6,15 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
-	"math/rand"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/Palasito/go-smtp/internal/httpclient"
 	"github.com/Palasito/go-smtp/internal/metrics"
+	"github.com/Palasito/go-smtp/internal/retry"
 )
 
-const sendMailEndpoint = "https://graph.microsoft.com/v1.0/users/%s/sendMail"
-
-// isRetryable returns true for status codes that represent transient failures.
-func isRetryable(code int) bool {
-	switch code {
-	case http.StatusTooManyRequests, // 429
-		http.StatusInternalServerError, // 500
-		http.StatusBadGateway,          // 502
-		http.StatusServiceUnavailable,  // 503
-		http.StatusGatewayTimeout:      // 504
-		return true
-	}
-	return false
-}
+const sendMailEndpointFmt = "%s/v1.0/users/%s/sendMail"
 
 // PermanentError wraps a Graph API failure caused by a non-retryable HTTP status
 // (e.g. 400 Bad Request, 403 Forbidden). The SMTP layer uses this type to issue a
@@ -40,33 +25,6 @@ type PermanentError struct {
 
 func (e *PermanentError) Error() string { return e.err.Error() }
 func (e *PermanentError) Unwrap() error { return e.err }
-
-// backoffDelay calculates the wait before the next attempt.
-// If the response carries a Retry-After header (integer seconds) its value
-// takes priority.  Otherwise exponential back-off is used: base * 2^attempt,
-// capped at 60 s.
-func backoffDelay(resp *http.Response, attempt int, base time.Duration) time.Duration {
-	const maxDelay = 60 * time.Second
-	if resp != nil {
-		if ra := resp.Header.Get("Retry-After"); ra != "" {
-			if secs, err := strconv.Atoi(ra); err == nil && secs > 0 {
-				d := time.Duration(secs) * time.Second
-				if d > maxDelay {
-					return maxDelay
-				}
-				return d
-			}
-		}
-	}
-	d := time.Duration(float64(base) * math.Pow(2, float64(attempt)))
-	// Add ±20% jitter to avoid thundering-herd retry storms.
-	jitter := 0.8 + rand.Float64()*0.4 // [0.8, 1.2)
-	d = time.Duration(float64(d) * jitter)
-	if d > maxDelay {
-		return maxDelay
-	}
-	return d
-}
 
 // doAttempt builds a fresh pipe-backed request and executes one HTTP call.
 // The caller is responsible for closing resp.Body on a non-error return.
@@ -106,8 +64,8 @@ func doAttempt(ctx context.Context, accessToken string, mimeBody []byte, url str
 // retried up to retryAttempts total attempts using exponential back-off
 // starting at retryBaseDelay.  A Retry-After response header overrides the
 // computed delay for 429 responses.
-func SendMail(accessToken string, mimeBody []byte, fromEmail string, retryAttempts int, retryBaseDelay time.Duration, httpTimeout time.Duration) error {
-	url := fmt.Sprintf(sendMailEndpoint, fromEmail)
+func SendMail(accessToken string, mimeBody []byte, fromEmail string, retryAttempts int, retryBaseDelay time.Duration, httpTimeout time.Duration, graphEndpoint string) error {
+	url := fmt.Sprintf(sendMailEndpointFmt, graphEndpoint, fromEmail)
 
 	var lastErr error
 	var permanent bool
@@ -126,7 +84,7 @@ func SendMail(accessToken string, mimeBody []byte, fromEmail string, retryAttemp
 			lastErr = fmt.Errorf("Graph API request failed: %w", err)
 			slog.Warn("Graph API transport error", "attempt", attempt+1, "error", err)
 			if attempt+1 < retryAttempts {
-				delay := backoffDelay(nil, attempt, retryBaseDelay)
+				delay := retry.Backoff(nil, attempt, retryBaseDelay, 60*time.Second)
 				slog.Info("Backing off before retry", "delay", delay)
 				time.Sleep(delay)
 			}
@@ -151,7 +109,7 @@ func SendMail(accessToken string, mimeBody []byte, fromEmail string, retryAttemp
 		}
 		lastErr = fmt.Errorf("Graph API sendMail failed: status=%d body=%s", resp.StatusCode, excerpt)
 
-		if !isRetryable(resp.StatusCode) {
+		if !retry.IsRetryable(resp.StatusCode) {
 			attemptCancel()
 			metrics.GraphAPILatency.WithLabelValues("permanent_error").Observe(time.Since(tAttempt).Seconds())
 			slog.Error("Graph API sendMail non-retryable failure",
@@ -166,7 +124,7 @@ func SendMail(accessToken string, mimeBody []byte, fromEmail string, retryAttemp
 			"attempt", attempt+1, "maxAttempts", retryAttempts)
 		attemptCancel()
 		if attempt+1 < retryAttempts {
-			delay := backoffDelay(resp, attempt, retryBaseDelay)
+			delay := retry.Backoff(resp, attempt, retryBaseDelay, 60*time.Second)
 			slog.Info("Backing off before retry", "delay", delay)
 			time.Sleep(delay)
 		}

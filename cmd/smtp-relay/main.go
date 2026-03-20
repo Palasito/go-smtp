@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 	"github.com/Palasito/go-smtp/internal/httpclient"
 	"github.com/Palasito/go-smtp/internal/server"
 	tlspkg "github.com/Palasito/go-smtp/internal/tls"
+	"github.com/Palasito/go-smtp/internal/version"
 	"github.com/Palasito/go-smtp/internal/whitelist"
 	gosmtp "github.com/emersion/go-smtp"
 )
@@ -54,6 +58,20 @@ func main() {
 	slog.SetDefault(logger)
 
 	slog.Info("Configuration loaded successfully")
+
+	slog.Info("Starting smtp-relay",
+		"version", version.Version,
+		"commit", version.Commit,
+		"buildDate", version.BuildDate,
+		"go", runtime.Version(),
+		"pid", os.Getpid(),
+		"smtpPort", cfg.SMTPPort,
+		"healthPort", cfg.HealthPort,
+		"tlsSource", cfg.TLSSource,
+		"maxRecipients", cfg.MaxRecipients,
+		"azureAuthorityHost", cfg.AzureAuthorityHost,
+		"graphEndpoint", cfg.GraphEndpoint,
+	)
 
 	// --- HTTP client ---
 	httpclient.Init(time.Duration(cfg.HTTPTimeout) * time.Second)
@@ -109,10 +127,9 @@ func main() {
 	}
 
 	// --- SMTP server ---
-	backend := &server.Backend{
-		Config:    cfg,
-		Whitelist: wl,
-	}
+	backend := &server.Backend{}
+	backend.SetConfig(cfg)
+	backend.SetWhitelist(wl)
 
 	s := gosmtp.NewServer(backend)
 	s.Addr = ":" + cfg.SMTPPort
@@ -137,8 +154,15 @@ func main() {
 
 	// --- Health / readiness HTTP server ---
 	healthSrv := &http.Server{
-		Addr:    ":" + cfg.HealthPort,
-		Handler: health.NewMux(func() error { return nil }),
+		Addr: ":" + cfg.HealthPort,
+		Handler: health.NewMux(func() error {
+			conn, err := net.DialTimeout("tcp", "127.0.0.1:"+cfg.SMTPPort, 2*time.Second)
+			if err != nil {
+				return fmt.Errorf("SMTP listener not reachable: %w", err)
+			}
+			conn.Close()
+			return nil
+		}),
 	}
 	go func() {
 		slog.Info("Health server starting", "addr", healthSrv.Addr)
@@ -222,7 +246,7 @@ loop:
 			if wlErr != nil {
 				slog.Warn("SIGHUP: whitelist reload failed, keeping current whitelist", "error", wlErr)
 			} else {
-				backend.Whitelist = newWl
+				backend.SetWhitelist(newWl)
 				if newWl != nil {
 					slog.Info("Whitelist reloaded", "networks", len(newWl.Networks))
 				} else {
@@ -231,7 +255,7 @@ loop:
 			}
 
 			// Hot-swap backend config — picked up by all subsequent sessions.
-			backend.Config = newCfg
+			backend.SetConfig(newCfg)
 			cfg = newCfg
 			slog.Info("Configuration reloaded successfully")
 		}

@@ -15,10 +15,18 @@ COPY . .
 
 # Build static binary
 # CGO_ENABLED=0 ensures fully static binary (no libc dependency)
-# -ldflags="-s -w" strips debug info and symbol table to reduce binary size
+# -ldflags injects version metadata and strips debug info to reduce binary size
 # -trimpath removes local filesystem paths from the binary
 ARG TARGETOS TARGETARCH TARGETVARIANT
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=${TARGETVARIANT#v} go build -ldflags="-s -w" -trimpath -o /smtp-relay ./cmd/smtp-relay
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=${TARGETVARIANT#v} go build \
+    -ldflags="-s -w \
+      -X github.com/Palasito/go-smtp/internal/version.Version=${VERSION} \
+      -X github.com/Palasito/go-smtp/internal/version.Commit=${COMMIT} \
+      -X github.com/Palasito/go-smtp/internal/version.BuildDate=${BUILD_DATE}" \
+    -trimpath -o /smtp-relay ./cmd/smtp-relay
 
 # ---- Runtime Stage ----
 FROM scratch
@@ -29,8 +37,11 @@ COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 # Copy the binary
 COPY --from=build /smtp-relay /smtp-relay
 
-# Expose default SMTP port (override at runtime via SMTP_PORT env var)
-EXPOSE 8025
+# Expose default SMTP and health ports (override at runtime via env vars)
+EXPOSE 8025 9090
+
+# Run as non-root user (nobody)
+USER 65534:65534
 
 # Run the binary
 ENTRYPOINT ["/smtp-relay"]

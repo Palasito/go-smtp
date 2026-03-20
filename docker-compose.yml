@@ -13,7 +13,7 @@ services:
       - "8025:8025"
       - "9090:9090"    # Health probes + Prometheus metrics
     volumes:
-      - ./certs:/usr/src/smtp-relay/certs
+      - ./certs:/certs
     environment:
       # ---------------------------------------------------------------------------
       # Logging

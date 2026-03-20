@@ -119,7 +119,9 @@ func LookupUser(tablesURL, partitionKey, lookupID string) (tenantID, clientID, f
 		return "", "", "", fmt.Errorf("failed to create Azure Table client: %w", err)
 	}
 
-	filter := fmt.Sprintf("PartitionKey eq '%s' and RowKey eq '%s'", partitionKey, lookupID)
+	filter := fmt.Sprintf("PartitionKey eq '%s' and RowKey eq '%s'",
+		strings.ReplaceAll(partitionKey, "'", "''"),
+		strings.ReplaceAll(lookupID, "'", "''"))
 	pager := client.NewListEntitiesPager(&aztables.ListEntitiesOptions{
 		Filter: &filter,
 	})

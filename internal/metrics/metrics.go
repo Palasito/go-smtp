@@ -11,6 +11,12 @@ var (
 	// Connections
 	// ---------------------------------------------------------------------------
 
+	// ConnectionsTotal counts the total number of SMTP connections received.
+	ConnectionsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "smtp_connections_total",
+		Help: "Total number of SMTP connections received.",
+	})
+
 	// ActiveConnections is the number of currently open SMTP sessions.
 	ActiveConnections = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "smtp_active_connections",
@@ -32,6 +38,12 @@ var (
 	AuthTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "smtp_auth_total",
 		Help: "Total SMTP authentication attempts.",
+	}, []string{"result"})
+
+	// WhitelistAuthTotal counts whitelist auto-authentication attempts, labelled by result.
+	WhitelistAuthTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "smtp_whitelist_auth_total",
+		Help: "Total whitelist auto-authentication attempts.",
 	}, []string{"result"})
 
 	// ---------------------------------------------------------------------------
@@ -61,6 +73,13 @@ var (
 			10485760, // 10 MB
 			36700160, // 35 MB (default max)
 		},
+	})
+
+	// RecipientsPerMessage is a histogram of RCPT TO count per message.
+	RecipientsPerMessage = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "smtp_recipients_per_message",
+		Help:    "Number of RCPT TO addresses per message.",
+		Buckets: []float64{1, 2, 3, 5, 10, 25, 50, 100},
 	})
 
 	// ---------------------------------------------------------------------------
@@ -100,6 +119,12 @@ var (
 		Help: "Total OAuth token cache misses (live Azure AD token fetch required).",
 	})
 
+	// TokenCacheSize is the current number of entries in the token cache.
+	TokenCacheSize = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "oauth_token_cache_size",
+		Help: "Current number of entries in the OAuth token cache.",
+	})
+
 	// ---------------------------------------------------------------------------
 	// Failure webhook
 	// ---------------------------------------------------------------------------
@@ -114,15 +139,19 @@ var (
 
 func init() {
 	prometheus.MustRegister(
+		ConnectionsTotal,
 		ActiveConnections,
 		SessionDuration,
 		AuthTotal,
+		WhitelistAuthTotal,
 		MessagesTotal,
 		MessageSize,
+		RecipientsPerMessage,
 		GraphAPILatency,
 		GraphAPIAttempts,
 		TokenCacheHits,
 		TokenCacheMisses,
+		TokenCacheSize,
 		WebhookTotal,
 	)
 }

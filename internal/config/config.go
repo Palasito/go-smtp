@@ -55,6 +55,10 @@ type Config struct {
 	TokenCacheMargin  int    // TOKEN_CACHE_MARGIN — default 300 (seconds), subtracted from token expires_in; must be >=0
 	SanitizeHeaders   bool   // SANITIZE_HEADERS — default false, strip privacy-sensitive headers before relaying
 	FailureWebhookURL string // FAILURE_WEBHOOK_URL — optional, HTTP(S) endpoint to POST on permanent send failure
+
+	// Sovereign / national cloud overrides
+	AzureAuthorityHost string // AZURE_AUTHORITY_HOST — default "https://login.microsoftonline.com", e.g. "https://login.microsoftonline.us"
+	GraphEndpoint      string // GRAPH_ENDPOINT — default "https://graph.microsoft.com", e.g. "https://graph.microsoft.us"
 }
 
 var (
@@ -204,6 +208,13 @@ func Load() (*Config, error) {
 	}
 	cfg.HealthPort = healthPort
 
+	// Reject port collision — both listeners cannot bind the same port.
+	if cfg.SMTPPort == cfg.HealthPort {
+		return nil, fmt.Errorf(
+			"SMTP_PORT and HEALTH_PORT cannot be the same (%s)", cfg.SMTPPort,
+		)
+	}
+
 	// --- MAX_MESSAGE_SIZE ---
 	maxMsgStr := getEnvOrDefault("MAX_MESSAGE_SIZE", "36700160")
 	maxMsg, err := strconv.ParseInt(maxMsgStr, 10, 64)
@@ -328,6 +339,14 @@ func Load() (*Config, error) {
 		)
 	}
 	cfg.FailureWebhookURL = failureWebhook
+
+	// --- AZURE_AUTHORITY_HOST ---
+	cfg.AzureAuthorityHost = getEnvOrDefault("AZURE_AUTHORITY_HOST", "https://login.microsoftonline.com")
+	cfg.AzureAuthorityHost = strings.TrimRight(cfg.AzureAuthorityHost, "/")
+
+	// --- GRAPH_ENDPOINT ---
+	cfg.GraphEndpoint = getEnvOrDefault("GRAPH_ENDPOINT", "https://graph.microsoft.com")
+	cfg.GraphEndpoint = strings.TrimRight(cfg.GraphEndpoint, "/")
 
 	// If WHITELIST_IPS is set, the OAuth credentials must also be provided.
 	if cfg.WhitelistIPs != "" {
