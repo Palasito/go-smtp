@@ -42,3 +42,4 @@ Thumbs.db
 # ---- Build artefacts ----
 dist/
 bin/
+logs/
