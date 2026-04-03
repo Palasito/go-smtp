@@ -10,6 +10,8 @@ require (
 	software.sslmate.com/src/go-pkcs12 v0.7.0
 )
 
+require golang.org/x/term v0.41.0 // indirect
+
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

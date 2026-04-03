@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/Palasito/go-smtp/internal/configgen"
 	"github.com/Palasito/go-smtp/internal/version"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -107,6 +108,14 @@ const indexHTML = `<!DOCTYPE html>
     </div>
     <p class="card-desc">Live Prometheus metrics dashboard: connections, auth, messages, Graph API, OAuth, webhooks.</p>
     <a class="card-link" href="/metrics">&#8594; Open dashboard</a>
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Config Generator</span>
+      <span class="badge info"><span class="dot"></span>wizard</span>
+    </div>
+    <p class="card-desc">Web-based configuration wizard to generate .env and docker-compose.yml templates.</p>
+    <a class="card-link" href="/generator">&#8594; Open generator</a>
   </div>
   <div class="card">
     <div class="card-header">
@@ -650,6 +659,9 @@ func NewMux(readyFn ReadinessFunc) *http.ServeMux {
 			slog.Debug("metrics: failed to write response", "error", err)
 		}
 	})
+
+	// Config generator — web-based config wizard.
+	configgen.RegisterRoutes(mux)
 
 	// Version — returns build metadata as JSON.
 	mux.HandleFunc("GET /version", func(w http.ResponseWriter, r *http.Request) {

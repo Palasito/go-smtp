@@ -66,10 +66,10 @@ type Config struct {
 }
 
 var (
-	validLogLevels  = []string{"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
-	validTLSSources = []string{"off", "auto", "file", "keyvault"}
-	validDelimiters = []string{"@", ":", "|"}
-	validLogFormats = []string{"text", "json"}
+	ValidLogLevels  = []string{"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+	ValidTLSSources = []string{"off", "auto", "file", "keyvault"}
+	ValidDelimiters = []string{"@", ":", "|"}
+	ValidLogFormats = []string{"text", "json"}
 )
 
 // getEnvOrDefault returns the value of the environment variable named by key,
@@ -98,10 +98,10 @@ func Load() (*Config, error) {
 
 	// --- LOG_LEVEL ---
 	logLevel := strings.ToUpper(getEnvOrDefault("LOG_LEVEL", "WARNING"))
-	if !contains(validLogLevels, logLevel) {
+	if !contains(ValidLogLevels, logLevel) {
 		return nil, fmt.Errorf(
 			"invalid LOG_LEVEL %q: must be one of %s",
-			logLevel, strings.Join(validLogLevels, ", "),
+			logLevel, strings.Join(ValidLogLevels, ", "),
 		)
 	}
 	cfg.LogLevel = logLevel
@@ -111,10 +111,10 @@ func Load() (*Config, error) {
 
 	// --- LOG_FORMAT ---
 	logFormat := strings.ToLower(getEnvOrDefault("LOG_FORMAT", "text"))
-	if !contains(validLogFormats, logFormat) {
+	if !contains(ValidLogFormats, logFormat) {
 		return nil, fmt.Errorf(
 			"invalid LOG_FORMAT %q: must be one of %s",
-			logFormat, strings.Join(validLogFormats, ", "),
+			logFormat, strings.Join(ValidLogFormats, ", "),
 		)
 	}
 	cfg.LogFormat = logFormat
@@ -143,10 +143,10 @@ func Load() (*Config, error) {
 
 	// --- TLS_SOURCE ---
 	tlsSource := strings.ToLower(getEnvOrDefault("TLS_SOURCE", "file"))
-	if !contains(validTLSSources, tlsSource) {
+	if !contains(ValidTLSSources, tlsSource) {
 		return nil, fmt.Errorf(
 			"invalid TLS_SOURCE %q: must be one of %s",
-			tlsSource, strings.Join(validTLSSources, ", "),
+			tlsSource, strings.Join(ValidTLSSources, ", "),
 		)
 	}
 	cfg.TLSSource = tlsSource
@@ -182,10 +182,10 @@ func Load() (*Config, error) {
 
 	// --- USERNAME_DELIMITER ---
 	delimiter := getEnvOrDefault("USERNAME_DELIMITER", "@")
-	if !contains(validDelimiters, delimiter) {
+	if !contains(ValidDelimiters, delimiter) {
 		return nil, fmt.Errorf(
 			"invalid USERNAME_DELIMITER %q: must be one of %s",
-			delimiter, strings.Join(validDelimiters, ", "),
+			delimiter, strings.Join(ValidDelimiters, ", "),
 		)
 	}
 	cfg.UsernameDelimiter = delimiter
