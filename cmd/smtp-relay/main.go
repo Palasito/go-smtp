@@ -76,6 +76,22 @@ func newSlogHandler(format string, w io.Writer, lvl slog.Level) slog.Handler {
 }
 
 func main() {
+	// Subcommand routing — handle CLI commands before starting the server.
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "generate":
+			runGenerate(os.Args[2:])
+			return
+		case "validate":
+			runValidate(os.Args[2:])
+			return
+		case "version":
+			fmt.Printf("smtp-relay %s (commit: %s, built: %s)\n",
+				version.Version, version.Commit, version.BuildDate)
+			return
+		}
+	}
+
 	// Load configuration from environment variables.
 	cfg, err := config.Load()
 	if err != nil {
